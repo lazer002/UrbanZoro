@@ -12,7 +12,7 @@ import ordersRouter from './routes/orders.js'
 import adminUsersRouter from './routes/adminUsers.js'
 import uploadRouter from './routes/upload.js'
 import statsRouter from './routes/stats.js'
-import searchRouter from './routes/Search.js'
+import searchRouter from './routes/search.js'
 import publicRouter from './routes/public.js'
 import bundleRoutes from "./routes/bundles.js";
 import adminOrdersRouter from './routes/adminOrder.js'
