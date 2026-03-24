@@ -39,9 +39,9 @@ router.post("/create", requireAuth, async (req, res) => {
 
     let guestId = null;
 
-    // Only create guest if there's no logged-in user
     if (!userId) {
-      // find or create guest by email to avoid duplicates
+      const clientGuestId = req.headers["x-guest-id"];
+      guestId = clientGuestId; // ✅ USE SAME ID AS APP
       let guest = null;
       if (contactEmail) {
         guest = await GuestUser.findOne({ email: contactEmail });
@@ -60,7 +60,6 @@ router.post("/create", requireAuth, async (req, res) => {
           phone: shippingAddress.phone,
         });
       }
-      guestId = guest._id;
     }
 
     const orderItems = items.map((i) => ({
@@ -88,7 +87,7 @@ router.post("/create", requireAuth, async (req, res) => {
       shippingAddress,
       items: orderItems,
       subtotal,
-      shippingFee: shipping || 100,
+      shippingFee: shipping ,
       total,
       discountCode: discountCode || "",
       paymentMethod,
@@ -97,9 +96,7 @@ router.post("/create", requireAuth, async (req, res) => {
       orderStatus: "pending",
     });
 
-    if (!userId && guestId) {
-      await GuestUser.findByIdAndUpdate(guestId, { $push: { orders: order._id } });
-    }
+
 
     // Razorpay flow (unchanged)
     if (paymentMethod === "razorpay") {
@@ -190,6 +187,7 @@ router.post("/payment-success", async (req, res) => {
 
 router.get("/track", async (req, res) => {
   try {
+    console.log("Track order query:", req.query);
     const { email, orderNumber } = req.query;
     if (!email && !orderNumber) {
       return res.status(400).json({ success: false, message: "email or orderNumber required" });
@@ -298,15 +296,26 @@ router.post("/track-email", async (req, res) => {
 });
 
 router.get("/mine", requireAuth, async (req, res) => {
-  try {
-    const userId = req.user?.id;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+try {
+  const userId = req.userId || null;
+  const guestId = req.headers["x-guest-id"];
 
-    const orders = await Order.find({ userId: userId }).sort({ createdAt: -1 });
-    console.log(`Found ${orders.length} orders for user ${userId}`);
+
+    let query = {};
+
+    if (userId) {
+      query.userId = userId;
+    } else if (guestId) {
+      query.guestId = guestId;
+    } else {
+      return res.status(400).json({ error: "No identifier provided" });
+    }
+console.log("Querying orders with:", query);
+    const orders = await Order.find(query).sort({ createdAt: -1 });
+console.log(orders)
     res.json({ orders });
   } catch (err) {
-    console.error("Get user orders error:", err);
+    console.error("Get orders error:", err);
     res.status(500).json({ error: "Failed to fetch orders" });
   }
 });
