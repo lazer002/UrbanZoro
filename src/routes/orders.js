@@ -321,4 +321,52 @@ console.log(orders)
 });
 
 
+router.put("/cancel", async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const guestId = req.headers["x-guest-id"];
+    const userId = req.user?.id || null;
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    /* 🔒 SECURITY */
+    if (userId) {
+      if (order.userId?.toString() !== userId.toString()) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+    } else {
+      if (order.guestId !== guestId) {
+        return res.status(403).json({ error: "Unauthorized" });
+      }
+    }
+
+    /* 🚫 VALIDATION */
+    if (!["pending", "confirmed"].includes(order.orderStatus)) {
+      return res.status(400).json({
+        error: "Order cannot be cancelled now",
+      });
+    }
+
+    // ✅ USE THIS INSTEAD OF save()
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      { orderStatus: "cancelled" }, // middleware will handle history
+      { new: true }
+    );
+
+    res.json({
+      success: true,
+      message: "Order cancelled successfully",
+      order: updatedOrder,
+    });
+
+  } catch (err) {
+    console.error("Cancel error:", err);
+    res.status(500).json({ error: "Cancel failed" });
+  }
+});
 export default router;
