@@ -310,9 +310,7 @@ try {
     } else {
       return res.status(400).json({ error: "No identifier provided" });
     }
-console.log("Querying orders with:", query);
     const orders = await Order.find(query).sort({ createdAt: -1 });
-console.log(orders)
     res.json({ orders });
   } catch (err) {
     console.error("Get orders error:", err);

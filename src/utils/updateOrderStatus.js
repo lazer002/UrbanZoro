@@ -3,7 +3,7 @@ import {Order} from "../models/Order.js"; // adjust path to your model
 import { isValidObjectId } from "mongoose";
 import { templateForStatus } from "./emailTemplates.js";
 import { sendEmail } from "./sendEmail.js";
-
+import { createNotification } from "./createNotification.js";
 export const VALID_STATUSES = [
   "pending", "confirmed", "dispatched", "shipped",
   "out for delivery", "delivered", "cancelled", "refunded"
@@ -51,7 +51,7 @@ export async function updateOrderStatus(orderId, status, opts = {}) {
   }
 
   // 2) read current (selecting minimal fields + any alternatives)
-  const current = await Order.findById(orderId).select("orderStatus status order_status email orderNumber").lean();
+  const current = await Order.findById(orderId).select("orderStatus status order_status email orderNumber userId guestId").lean();
   if (!current) {
     return { success: false, error: new Error("Order not found") };
   }
@@ -79,14 +79,27 @@ export async function updateOrderStatus(orderId, status, opts = {}) {
       createdAt: new Date(),
     };
 
-    updated = await Order.findByIdAndUpdate(
-      orderId,
-      {
-        $set: { orderStatus: normalized, updatedAt: new Date() },
-        $push: { statusHistory: { $each: [historyEntry], $position: 0 } },
-      },
-      { new: true, runValidators: true }
-    ).lean();
+await Order.findByIdAndUpdate(
+  orderId,
+  {
+    $set: { orderStatus: normalized, updatedAt: new Date() },
+    $push: { statusHistory: { $each: [historyEntry], $position: 0 } },
+  },
+  { new: true, runValidators: true }
+);
+
+// 🔥 FETCH FULL DATA AGAIN (IMPORTANT)
+updated = await Order.findById(orderId)
+  .select("_id orderNumber email userId guestId")
+  .lean();
+
+
+console.log("FINAL CHECK:", {
+  id: updated._id,
+  userId: updated.userId,
+  guestId: updated.guestId,
+});
+
   } else {
     // status unchanged but shouldSendEmail or forceEmail true; reuse current object as updated
     updated = current;
@@ -108,6 +121,8 @@ try {
     html: tmpl.html,
   });
 
+console.log("Email send initiated:", { to: updated.email, subject: tmpl.subject });
+
   if (awaitEmail) {
     emailResult = await sendPromise;
   } else {
@@ -122,6 +137,32 @@ try {
 } catch (err) {
   console.error("email send error:", err);
   emailResult = { success: false, error: err?.message ?? String(err) };
+}
+
+
+try {
+  console.log(updated)
+  console.log("Creating notification for status change:", { orderId, newStatus: normalized, statusUnchanged, userId: updated.userId, guestId: updated.guestId });
+  const tmpl = templateForStatus(normalized, { order: updated });
+  if (!statusUnchanged) {
+    await createNotification({
+      type: "order",
+
+      title: tmpl.subject,
+      body: tmpl.text,
+
+      userId: updated.userId || null,
+      guestId: updated.guestId || null,
+
+      payload: {
+        orderId: updated._id,
+        orderNumber: updated.orderNumber,
+        screen: "orderDetails",
+      },
+    });
+  }
+} catch (err) {
+  console.error("notification error:", err);
 }
 
   return { success: true, order: updated, emailResult };
