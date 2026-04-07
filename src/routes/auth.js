@@ -1,7 +1,7 @@
 import express from 'express'
 import { User } from '../models/User.js'
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/jwt.js'
-import { googleLogin } from '../utils/gauth.js'
+import { googleLogin, googleLoginMobile } from '../utils/gauth.js'
 
 const router = express.Router()
 
@@ -232,6 +232,7 @@ router.post("/change-password", async (req, res) => {
 
 
 router.post("/google", googleLogin);
+router.post("/google/mobile", googleLoginMobile);
 
 export default router
 
