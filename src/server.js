@@ -19,6 +19,7 @@ import adminOrdersRouter from './routes/adminOrder.js'
 import wishlistRouter from './routes/wishlist.js'
 import returnsRouter from './routes/return.js'
 import notificationRoutes from './routes/notification.js'
+import user from './routes/user.js'
 
 dotenv.config()
 
@@ -84,6 +85,7 @@ app.use('/api', publicRouter)
 app.use('/api/wishlist', wishlistRouter)
 app.use('/api/returns', returnsRouter)
 app.use("/api/notifications", notificationRoutes);
+app.use('/api/user', user)
 /* -------------------------------------------------------------------------- */
 /*                           SERVER START + LOCAL IP                           */
 /* -------------------------------------------------------------------------- */

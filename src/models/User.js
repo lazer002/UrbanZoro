@@ -23,7 +23,10 @@ const userSchema = new mongoose.Schema(
     addresses: { type: [mongoose.Schema.Types.Mixed], default: [] },
     defaultAddress: { type: mongoose.Schema.Types.Mixed },
     orders: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Order' }],
-
+loginSource: {
+  type: String,
+  enum: ["web", "android", "ios"],
+},
     // Account info
     isVerified: { type: Boolean, default: false },
     lastLogin: { type: Date },

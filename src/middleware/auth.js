@@ -61,6 +61,24 @@ export function requireAuth(req, res, next) {
   }
 }
 
+export const protectOptional = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      const token = authHeader.split(" ")[1];
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = decoded;
+    }
+
+    // guest handled via header
+    next();
+  } catch (err) {
+    next(); // don't block, just ignore
+  }
+};
+
+
 export function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== "admin") {
     return res.status(403).json({ error: "Forbidden" });

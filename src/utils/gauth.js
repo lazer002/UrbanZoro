@@ -30,6 +30,7 @@ export const googleLogin = async (req, res) => {
           googleId: sub,
           avatar: picture || '',
           provider: 'google',
+          loginSource: 'web',
           role: 'user',
           isVerified: Boolean(email_verified),
           wishlist: [],
@@ -109,7 +110,7 @@ const mobile_client = new OAuth2Client(process.env.GOOGLE_CLIENT_APP);
 
 export const googleLoginMobile = async (req, res) => {
   try {
-    const { code } = req.body;
+    const { code,codeVerifier } = req.body;
 console.log("Google Mobile Login Attempt:", { code });
     if (!code) {
       return res.status(400).json({
@@ -126,6 +127,7 @@ console.log("Google Mobile Login Attempt:", { code });
         client_id: process.env.GOOGLE_CLIENT_APP,
         redirect_uri: "com.anonymous.monkey:/oauthredirect",
         grant_type: "authorization_code",
+        code_verifier: codeVerifier,
       }
     );
 
@@ -173,6 +175,7 @@ console.log("Verified Google token payload:", payload);
         provider: "google",
         avatar: picture || "",
         role: "user",
+        loginSource: "android", // or "ios" based on your app
         isVerified: Boolean(email_verified),
         wishlist: [],
         cart: [],
