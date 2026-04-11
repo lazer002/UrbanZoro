@@ -1,83 +1,44 @@
 import { verifyAccessToken } from "../utils/jwt.js";
+import jwt from "jsonwebtoken";
+
 
 export function requireAuth(req, res, next) {
-  const debug = Boolean(process.env.DEBUG_AUTH);
-
   const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : null;
 
-  if (debug) {
-    console.log("\n=== AUTH DEBUG ===");
-    console.log("Auth header raw:", authHeader || "[missing]");
+  const guestId = req.headers["x-guest-id"] || null;
+
+  // ❌ No identity at all
+  if (!token && !guestId) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
-  if (!token) {
- return next();
+  // ✅ If token exists → verify user
+  if (token) {
+    try {
+      const payload = verifyAccessToken(token);
+
+      const id = payload.id || payload.userId || payload._id;
+
+      if (!id) {
+        return res.status(401).json({ error: "Invalid token payload" });
+      }
+
+      req.user = { id: String(id), ...payload };
+      return next();
+    } catch (e) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
   }
 
-  if (debug) {
-    console.log("Extracted token (first 30 chars):", token.slice(0, 30) + "...");
-  }
-
-  try {
-    const payload = verifyAccessToken(token);
-
-    if (debug) {
-      console.log("Decoded payload:", payload);
-    }
-
-    if (!payload || typeof payload !== "object") {
-      if (debug) console.log("Invalid payload type:", payload);
-      return res.status(401).json({ error: "Invalid token payload" });
-    }
-
-    const id = payload.id || payload.userId || payload._id;
-
-    if (debug) {
-      console.log("Normalized user id:", id);
-    }
-
-    if (!id) {
-      if (debug) console.log("Missing id in payload");
-      return res
-        .status(401)
-        .json({ error: "Invalid token payload (missing id)" });
-    }
-
-    req.user = { id: String(id), ...payload };
-
-    if (debug) {
-      console.log("Authenticated user:", req.user);
-      console.log("=== AUTH OK ===\n");
-    }
-
+  // ✅ If only guest → allow request
+  if (guestId) {
+    req.guestId = guestId;
     return next();
-  } catch (e) {
-    if (debug) {
-      console.error("verifyAccessToken ERROR:", e.message);
-      console.log("=== AUTH FAILED ===\n");
-    }
-    return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
-
-export const protectOptional = (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = decoded;
-    }
-
-    // guest handled via header
-    next();
-  } catch (err) {
-    next(); // don't block, just ignore
-  }
-};
-
 
 export function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== "admin") {

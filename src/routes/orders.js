@@ -296,28 +296,27 @@ router.post("/track-email", async (req, res) => {
 });
 
 router.get("/mine", requireAuth, async (req, res) => {
-try {
-  const userId = req.userId || null;
-  const guestId = req.headers["x-guest-id"];
+  try {
+    let orders = [];
 
-
-    let query = {};
-
-    if (userId) {
-      query.userId = userId;
-    } else if (guestId) {
-      query.guestId = guestId;
-    } else {
-      return res.status(400).json({ error: "No identifier provided" });
+    // ✅ Logged-in user
+    if (req.user?.id) {
+      console.log("User orders:", req.user.id);
+      orders = await Order.find({ userId: req.user.id });
     }
-    const orders = await Order.find(query).sort({ createdAt: -1 });
-    res.json({ orders });
+
+    // ✅ Guest user
+    else if (req.guestId) {
+      console.log("Guest orders:", req.guestId);
+      orders = await Order.find({ guestId: req.guestId });
+    }
+
+    res.json({ orders: orders.sort((a, b) => b.createdAt - a.createdAt) });
   } catch (err) {
     console.error("Get orders error:", err);
     res.status(500).json({ error: "Failed to fetch orders" });
   }
 });
-
 
 router.put("/cancel", async (req, res) => {
   try {

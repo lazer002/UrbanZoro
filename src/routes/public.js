@@ -3,7 +3,7 @@ import {Category}  from '../models/Category.js'
 import { upload } from '../middleware/upload.js'
 import { supabase } from '../config/supabase.js'
 import dotenv from 'dotenv'
-import { protectOptional } from '../middleware/auth.js' // new middleware
+import { requireAuth } from '../middleware/auth.js' // new middleware
 dotenv.config()
 const router = express.Router()
 
@@ -18,25 +18,16 @@ router.get('/categories', async (req, res) => {
 })
 router.post(
   "/upload/image",
-  protectOptional, // 🔥 allow user OR guest
+  requireAuth, 
   upload.single("file"),
   async (req, res) => {
     try {
+      console.log("Upload request - user:", req.user);
       if (!req.file) {
         return res.status(400).json({ error: "No file" });
       }
 
-      // 🔥 identify uploader
-      const userId = req.user?.id || null;
-      const guestId = req.headers["x-guest-id"] || null;
-
-      if (!userId && !guestId) {
-        return res.status(401).json({
-          error: "Unauthorized upload",
-        });
-      }
-
-      // 🔥 file validation
+  
       const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
       if (!allowedTypes.includes(req.file.mimetype)) {
         return res.status(400).json({
