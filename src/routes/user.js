@@ -1,9 +1,10 @@
 import express from "express";
 import mongoose from "mongoose";
 import { User } from "../models/User.js";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = express.Router();
-router.put("/update", async (req, res) => {
+router.put("/update",requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
 

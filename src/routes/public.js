@@ -16,11 +16,7 @@ router.get('/categories', async (req, res) => {
         res.status(500).json({ error: 'Internal server error' })
     }
 })
-router.post(
-  "/upload/image",
-  requireAuth, 
-  upload.single("file"),
-  async (req, res) => {
+router.post("/upload/image",requireAuth,upload.single("file"),async (req, res) => {
     try {
       console.log("Upload request - user:", req.user);
       if (!req.file) {
@@ -41,7 +37,8 @@ router.post(
           error: "File too large (max 1MB)",
         });
       }
-
+const userId = req.user?.id || null;          // ✅ from requireAuth
+const guestId = req.headers["x-guest-id"] || null; // ✅ from header
       // 🔥 naming (track owner)
       const fileExt = req.file.originalname.split(".").pop();
       const owner = userId || `guest-${guestId}`;
