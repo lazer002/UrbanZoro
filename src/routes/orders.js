@@ -8,6 +8,7 @@ import { getNextOrderSeq } from "../models/Counter.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { templateForStatus } from "../utils/emailTemplates.js";
 import { requireAuth } from "../middleware/auth.js";
+import mongoose from "mongoose";
 
 const router = express.Router();
 
@@ -48,6 +49,7 @@ router.post("/create", requireAuth, async (req, res) => {
       }
       if (!guest) {
         guest = await GuestUser.create({
+          guestId,
           email: contactEmail,
           firstName: shippingAddress.firstName,
           lastName: shippingAddress.lastName,
@@ -58,6 +60,7 @@ router.post("/create", requireAuth, async (req, res) => {
           zip: shippingAddress.zip || "110045",
           country: shippingAddress.country || "India",
           phone: shippingAddress.phone,
+         
         });
       }
     }
@@ -96,7 +99,15 @@ router.post("/create", requireAuth, async (req, res) => {
       orderStatus: "pending",
     });
 
-
+if (!userId) {
+  await GuestUser.findOneAndUpdate(
+    { email: contactEmail },
+    {
+      $push: { orders: order._id }, // ✅ store ORDER ID (not productId)
+    },
+    { upsert: true }
+  );
+}
 
     // Razorpay flow (unchanged)
     if (paymentMethod === "razorpay") {
@@ -297,6 +308,7 @@ router.post("/track-email", async (req, res) => {
 
 router.get("/mine", requireAuth, async (req, res) => {
   try {
+
     let orders = [];
 
     // ✅ Logged-in user
@@ -310,11 +322,39 @@ router.get("/mine", requireAuth, async (req, res) => {
       console.log("Guest orders:", req.guestId);
       orders = await Order.find({ guestId: req.guestId });
     }
-
+console.log("Fetched orders:", orders.length);
     res.json({ orders: orders.sort((a, b) => b.createdAt - a.createdAt) });
   } catch (err) {
     console.error("Get orders error:", err);
     res.status(500).json({ error: "Failed to fetch orders" });
+  }
+});
+
+router.post("/merge-orders", requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const guestId = req.headers["x-guest-id"];
+
+    console.log("🔄 MERGING guestId:", guestId, "→ user:", userId);
+
+    if (!guestId) {
+      return res.json({ message: "No guest orders" });
+    }
+
+    const result = await Order.updateMany(
+      { guestId }, // ✅ THIS IS KEY
+      {
+        $set: { userId },
+        $unset: { guestId: "" },
+      }
+    );
+
+    console.log("✅ Orders merged:", result.modifiedCount);
+
+    res.json({ success: true, merged: result.modifiedCount });
+  } catch (err) {
+    console.error("❌ Merge failed:", err);
+    res.status(500).json({ error: "Merge failed" });
   }
 });
 

@@ -5,7 +5,7 @@ const OrderSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: false },
     guestId: { type: String,  
   required: false,
-  index: true, ref: "GuestUser" },
+ ref: "GuestUser" },
 
     // required & validated
     email: { type: String, required: true, match: /.+\@.+\..+/, index: true },

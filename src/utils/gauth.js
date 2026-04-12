@@ -111,7 +111,7 @@ const mobile_client = new OAuth2Client(process.env.GOOGLE_CLIENT_APP);
 export const googleLoginMobile = async (req, res) => {
   try {
     const { code,codeVerifier } = req.body;
-console.log("Google Mobile Login Attempt:", { code });
+
     if (!code) {
       return res.status(400).json({
         success: false,
@@ -132,7 +132,7 @@ console.log("Google Mobile Login Attempt:", { code });
     );
 
     const { id_token } = tokenRes.data;
-console.log("Received tokens from Google:", { id_token, tokenResData: tokenRes.data });
+
     if (!id_token) {
       return res.status(400).json({
         success: false,
@@ -147,7 +147,7 @@ console.log("Received tokens from Google:", { id_token, tokenResData: tokenRes.d
     });
 
     const payload = ticket.getPayload();
-console.log("Verified Google token payload:", payload);
+
     if (!payload) {
       return res.status(401).json({
         success: false,

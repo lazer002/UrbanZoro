@@ -1,7 +1,7 @@
 import express from "express";
 import { User } from "../models/User.js";
 import { Guest } from "../models/Guest.js";
-
+import { requireAuth } from "../middleware/auth.js";
 const router = express.Router();
 
 function idsToStrings(arr) {
@@ -105,25 +105,22 @@ router.post("/wishremove", async (req, res) => {
 
 /* ================= SYNC (ONLY USER) ================= */
 
-router.post("/sync", async (req, res) => {
+router.post("/sync", requireAuth,async (req, res) => {
   try {
-    const userId = req.userId || req.user?.id;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+  const guestId = req.headers["x-guest-id"];
+  const userId = req.user?.id;
 
-    const items = Array.isArray(req.body.items)
-      ? req.body.items.map(String)
-      : [];
+  if (userId) {
+    const user = await User.findById(userId).select("wishlist");
+    return res.json({ items: user?.wishlist || [] });
+  }
 
-    if (items.length > 0) {
-      await User.updateOne(
-        { _id: userId },
-        { $addToSet: { wishlist: { $each: items } } }
-      );
-    }
+  if (guestId) {
+    const guest = await Guest.findOne({ guestId });
+    return res.json({ items: guest?.wishlist || [] });
+  }
 
-    const user = await User.findById(userId).select("wishlist").lean();
-
-    return res.json({ items: idsToStrings(user.wishlist || []) });
+  res.json({ items: [] });
   } catch (err) {
     console.error("SYNC error", err);
     return res.status(500).json({ error: "Server error" });

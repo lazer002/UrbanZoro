@@ -10,6 +10,7 @@ const GuestSchema = new mongoose.Schema(
       match: [/^\S+@\S+\.\S+$/, "Please enter a valid email address"],
       index: true,
     },
+    guestId: { type: String, required: true, unique: true, index: true },
     firstName: { type: String, required: true, trim: true, maxlength: 50 },
     lastName: { type: String, required: true, trim: true, maxlength: 50 },
     address: { type: String, required: true, trim: true },

@@ -58,7 +58,7 @@ const NotificationSchema = new Schema(
     read: {
       type: Boolean,
       default: false,
-      index: true,
+   
     },
 
     readAt: {
