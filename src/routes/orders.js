@@ -7,13 +7,13 @@ import axios from "axios"; // fixed import
 import { getNextOrderSeq } from "../models/Counter.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { templateForStatus } from "../utils/emailTemplates.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth ,optionalAuth} from "../middleware/auth.js";
 import mongoose from "mongoose";
 
 const router = express.Router();
 
 
-router.post("/create", requireAuth, async (req, res) => {
+router.post("/create", optionalAuth, async (req, res) => {
   try {
     console.log("Create order request body:", req.body);
     // defensive read: prefer normalized id set by requireAuth
@@ -306,30 +306,31 @@ router.post("/track-email", async (req, res) => {
   }
 });
 
-router.get("/mine", requireAuth, async (req, res) => {
+router.get("/mine", optionalAuth, async (req, res) => {
   try {
+    const userId = req.user?.id;
+    const guestId = req.headers["x-guest-id"];
+
+    console.log("Fetching orders:", { userId, guestId });
 
     let orders = [];
 
-    // ✅ Logged-in user
-    if (req.user?.id) {
-      console.log("User orders:", req.user.id);
-      orders = await Order.find({ userId: req.user.id });
-    }
-
-    // ✅ Guest user
-    else if (req.guestId) {
-      console.log("Guest orders:", req.guestId);
-      orders = await Order.find({ guestId: req.guestId });
+    if (userId) {
+      orders = await Order.find({ userId });
+    } else if (guestId) {
+      orders = await Order.find({ guestId });
+    } else {
+      return res.status(400).json({ error: "No identity" });
     }
 console.log("Fetched orders:", orders.length);
-    res.json({ orders: orders.sort((a, b) => b.createdAt - a.createdAt) });
+    res.json({
+      orders: orders.sort((a, b) => b.createdAt - a.createdAt),
+    });
   } catch (err) {
     console.error("Get orders error:", err);
     res.status(500).json({ error: "Failed to fetch orders" });
   }
 });
-
 router.post("/merge-orders", requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;

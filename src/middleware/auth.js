@@ -3,6 +3,35 @@ import jwt from "jsonwebtoken";
 
 
 export function requireAuth(req, res, next) {
+
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ")
+    ? authHeader.slice(7)
+    : null;
+console.log("requireAuth - authHeader:", authHeader);
+  if (!token) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    const payload = verifyAccessToken(token);
+
+    const id = payload.id || payload.userId || payload._id;
+
+    if (!id) {
+      return res.status(401).json({ error: "Invalid token payload" });
+    }
+
+    req.user = { id: String(id), ...payload };
+
+    return next();
+  } catch (e) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
+
+export function optionalAuth(req, res, next) {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ")
     ? authHeader.slice(7)
@@ -10,34 +39,27 @@ export function requireAuth(req, res, next) {
 
   const guestId = req.headers["x-guest-id"] || null;
 
-  // ❌ No identity at all
-  if (!token && !guestId) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-
-  // ✅ If token exists → verify user
+  // user
   if (token) {
     try {
       const payload = verifyAccessToken(token);
 
       const id = payload.id || payload.userId || payload._id;
 
-      if (!id) {
-        return res.status(401).json({ error: "Invalid token payload" });
+      if (id) {
+        req.user = { id: String(id), ...payload };
       }
-
-      req.user = { id: String(id), ...payload };
-      return next();
     } catch (e) {
-      return res.status(401).json({ error: "Invalid or expired token" });
+      console.log("Invalid token, continuing as guest");
     }
   }
 
-  // ✅ If only guest → allow request
+  // guest
   if (guestId) {
     req.guestId = guestId;
-    return next();
   }
+
+  return next();
 }
 
 export function requireAdmin(req, res, next) {

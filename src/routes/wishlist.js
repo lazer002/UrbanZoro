@@ -1,8 +1,9 @@
 import express from "express";
 import { User } from "../models/User.js";
 import { Guest } from "../models/Guest.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth,optionalAuth } from "../middleware/auth.js";
 const router = express.Router();
+import mongoose from "mongoose";
 
 function idsToStrings(arr) {
   if (!Array.isArray(arr)) return [];
@@ -12,8 +13,14 @@ function idsToStrings(arr) {
 /* ================= HELPER ================= */
 
 async function getWishlistOwner(req) {
-  const userId = req.userId || req.user?.id;
+  const userId = req.user?.id;
   const guestId = req.headers["x-guest-id"];
+
+  console.log("Determining wishlist owner:", { userId, guestId });
+
+  if (!userId && !guestId) {
+    throw new Error("No user or guest"); // 🔥 debug catch
+  }
 
   if (userId) {
     return {
@@ -37,11 +44,12 @@ async function getWishlistOwner(req) {
 
 /* ================= GET ================= */
 
-router.get("/", async (req, res) => {
+router.get("/",optionalAuth, async (req, res) => {
   try {
     const owner = await getWishlistOwner(req);
     if (!owner) return res.status(401).json({ error: "Unauthorized" });
 
+    console.log("Wishlist owner found:", { type: owner.type, id: owner.doc._id });
     return res.json({
       items: idsToStrings(owner.doc.wishlist || []),
     });
@@ -53,50 +61,59 @@ router.get("/", async (req, res) => {
 
 /* ================= ADD ================= */
 
-router.post("/wishadd", async (req, res) => {
+router.post("/wishadd", optionalAuth, async (req, res) => {
   try {
     const owner = await getWishlistOwner(req);
-    if (!owner) return res.status(401).json({ error: "Unauthorized" });
+    if (!owner?.doc) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
     const productId = req.body.productId;
-    if (!productId) return res.status(400).json({ error: "Invalid productId" });
 
-    await owner.doc.updateOne({
-      $addToSet: { wishlist: productId },
+    if (!productId || !mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ error: "Invalid productId" });
+    }
+
+    const updated = await owner.doc.constructor.findByIdAndUpdate(
+      owner.doc._id,
+      { $addToSet: { wishlist: productId } },
+      { new: true, select: "wishlist" }
+    );
+
+    return res.json({
+      items: idsToStrings(updated?.wishlist || []),
     });
 
-    const updated = await owner.doc.constructor
-      .findById(owner.doc._id)
-      .select("wishlist")
-      .lean();
-
-    return res.json({ items: idsToStrings(updated.wishlist || []) });
   } catch (err) {
     console.error("ADD wishlist error", err);
     return res.status(500).json({ error: "Server error" });
   }
 });
-
 /* ================= REMOVE ================= */
 
-router.post("/wishremove", async (req, res) => {
+router.post("/wishremove", optionalAuth, async (req, res) => {
   try {
     const owner = await getWishlistOwner(req);
-    if (!owner) return res.status(401).json({ error: "Unauthorized" });
+    if (!owner?.doc) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
     const productId = req.body.productId;
-    if (!productId) return res.status(400).json({ error: "Invalid productId" });
 
-    await owner.doc.updateOne({
-      $pull: { wishlist: productId },
+    if (!productId || !mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ error: "Invalid productId" });
+    }
+
+    const updated = await owner.doc.constructor.findByIdAndUpdate(
+      owner.doc._id,
+      { $pull: { wishlist: productId } },
+      { new: true, select: "wishlist" }
+    );
+
+    return res.json({
+      items: idsToStrings(updated?.wishlist || []),
     });
 
-    const updated = await owner.doc.constructor
-      .findById(owner.doc._id)
-      .select("wishlist")
-      .lean();
-
-    return res.json({ items: idsToStrings(updated.wishlist || []) });
   } catch (err) {
     console.error("REMOVE wishlist error", err);
     return res.status(500).json({ error: "Server error" });
@@ -105,22 +122,46 @@ router.post("/wishremove", async (req, res) => {
 
 /* ================= SYNC (ONLY USER) ================= */
 
-router.post("/sync", requireAuth,async (req, res) => {
+router.post("/sync", requireAuth, async (req, res) => {
   try {
-  const guestId = req.headers["x-guest-id"];
-  const userId = req.user?.id;
+    const guestId = req.headers["x-guest-id"];
+    const userId = req.user?.id;
 
-  if (userId) {
-    const user = await User.findById(userId).select("wishlist");
-    return res.json({ items: user?.wishlist || [] });
-  }
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
 
-  if (guestId) {
-    const guest = await Guest.findOne({ guestId });
-    return res.json({ items: guest?.wishlist || [] });
-  }
+    const user = await User.findById(userId);
 
-  res.json({ items: [] });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    // 🔥 merge guest wishlist
+    if (guestId) {
+      const guest = await Guest.findOne({ guestId });
+
+      if (guest && guest.wishlist?.length) {
+        user.wishlist = [
+          ...new Set([
+            ...(user.wishlist || []),
+            ...guest.wishlist,
+          ]),
+        ];
+
+        await user.save();
+
+        console.log("✅ Wishlist merged");
+
+        // 🔥 clear guest
+        await Guest.deleteOne({ guestId });
+      }
+    }
+
+    return res.json({
+      items: user.wishlist || [],
+    });
+
   } catch (err) {
     console.error("SYNC error", err);
     return res.status(500).json({ error: "Server error" });

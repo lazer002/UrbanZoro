@@ -6,6 +6,8 @@ import { requireAuth } from "../middleware/auth.js";
 const router = express.Router();
 router.put("/update",requireAuth, async (req, res) => {
   try {
+    console.log("Update user request body:", req.body);
+    console.log("Authenticated user:", req.user);
     const userId = req.user.id;
 
     const { name, phone, avatar } = req.body;

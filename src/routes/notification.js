@@ -1,28 +1,39 @@
 import express from "express";
 import { Notification } from "../models/Notification.js";
+import { optionalAuth } from "../middleware/auth.js"; // ✅ use this
 
 const router = express.Router();
 
 /* =======================================================
-   GET ALL NOTIFICATIONS (user / guest)
+   HELPER → GET OWNER QUERY
 ======================================================= */
-router.get("/", async (req, res) => {
+function getOwnerQuery(req) {
+  const userId = req.user?.id;
+  const guestId = req.guestId || req.headers["x-guest-id"];
+
+  if (userId) return { userId };
+  if (guestId) return { guestId };
+
+  return null;
+}
+
+/* =======================================================
+   GET ALL NOTIFICATIONS
+======================================================= */
+router.get("/", optionalAuth, async (req, res) => {
   try {
-    console.log("Fetching notifications for user:", req.user?._id, "guestId:", req.headers["x-guest-id"]);
-    const guestId = req.headers["x-guest-id"];
+    const query = getOwnerQuery(req);
 
-    let query = {};
-
-    if (req.user) {
-      query.userId = req.user._id;
-    } else if (guestId) {
-      query.guestId = guestId;
+    if (!query) {
+      return res.json({ success: true, notifications: [] });
     }
+
+    console.log("Fetching notifications:", query);
 
     const notifications = await Notification.find(query)
       .sort({ createdAt: -1 })
       .limit(50);
-console.log("Fetched notifications:", notifications);
+
     res.json({
       success: true,
       notifications,
@@ -34,12 +45,14 @@ console.log("Fetched notifications:", notifications);
 });
 
 /* =======================================================
-   MARK AS READ
+   MARK ONE AS READ
 ======================================================= */
-router.patch("/:id/read", async (req, res) => {
+router.patch("/:id/read", optionalAuth, async (req, res) => {
   try {
-    const notif = await Notification.findByIdAndUpdate(
-      req.params.id,
+    const query = getOwnerQuery(req);
+
+    const notif = await Notification.findOneAndUpdate(
+      { _id: req.params.id, ...query },
       {
         read: true,
         readAt: new Date(),
@@ -58,19 +71,13 @@ router.patch("/:id/read", async (req, res) => {
 });
 
 /* =======================================================
-   MARK ALL AS REA
+   MARK ALL AS READ
 ======================================================= */
-router.patch("/read-all", async (req, res) => {
+router.patch("/read-all", optionalAuth, async (req, res) => {
   try {
-    const guestId = req.headers["x-guest-id"];
+    const query = getOwnerQuery(req);
 
-    let query = {};
-
-    if (req.user) {
-      query.userId = req.user._id;
-    } else if (guestId) {
-      query.guestId = guestId;
-    }
+    if (!query) return res.json({ success: true });
 
     await Notification.updateMany(query, {
       read: true,
@@ -87,9 +94,14 @@ router.patch("/read-all", async (req, res) => {
 /* =======================================================
    DELETE NOTIFICATION
 ======================================================= */
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", optionalAuth, async (req, res) => {
   try {
-    await Notification.findByIdAndDelete(req.params.id);
+    const query = getOwnerQuery(req);
+
+    await Notification.findOneAndDelete({
+      _id: req.params.id,
+      ...query,
+    });
 
     res.json({ success: true });
   } catch (err) {
@@ -99,22 +111,23 @@ router.delete("/:id", async (req, res) => {
 });
 
 /* =======================================================
-   UNREAD COUNT (FOR BADGE 🔴)
+   UNREAD COUNT (BADGE 🔴)
 ======================================================= */
-router.get("/unread-count", async (req, res) => {
+router.get("/unread-count", optionalAuth, async (req, res) => {
   try {
-    const guestId = req.headers["x-guest-id"];
+    const query = getOwnerQuery(req);
 
-    let query = { read: false };
-
-    if (req.user) {
-      query.userId = req.user._id;
-    } else if (guestId) {
-      query.guestId = guestId;
+    if (!query) {
+      return res.json({ success: true, count: 0 });
     }
 
-    const count = await Notification.countDocuments(query);
-console.log("Unread notifications count for user:", req.user?._id, "guestId:", guestId, "count:", count);
+    const count = await Notification.countDocuments({
+      ...query,
+      read: false,
+    });
+
+    console.log("Unread notifications:", query, "count:", count);
+
     res.json({
       success: true,
       count,
@@ -124,9 +137,18 @@ console.log("Unread notifications count for user:", req.user?._id, "guestId:", g
     res.status(500).json({ success: false });
   }
 });
-router.get("/notifications-detail/:id", async (req, res) => {
+
+/* =======================================================
+   GET SINGLE NOTIFICATION
+======================================================= */
+router.get("/notifications-detail/:id", optionalAuth, async (req, res) => {
   try {
-    const notif = await Notification.findById(req.params.id);
+    const query = getOwnerQuery(req);
+
+    const notif = await Notification.findOne({
+      _id: req.params.id,
+      ...query,
+    });
 
     if (!notif) {
       return res.status(404).json({ message: "Not found" });
@@ -137,4 +159,5 @@ router.get("/notifications-detail/:id", async (req, res) => {
     res.status(500).json({ message: "Error" });
   }
 });
+
 export default router;
