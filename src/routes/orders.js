@@ -8,23 +8,20 @@ import { getNextOrderSeq } from "../models/Counter.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { templateForStatus } from "../utils/emailTemplates.js";
 import { requireAuth ,optionalAuth} from "../middleware/auth.js";
+import {Product} from "../models/Product.js";
 import mongoose from "mongoose";
-
+import crypto from "crypto";
 const router = express.Router();
 
 
 router.post("/create", optionalAuth, async (req, res) => {
   try {
     console.log("Create order request body:", req.body);
-    // defensive read: prefer normalized id set by requireAuth
+
     const userId = req.user?.id || req.user?._id || null;
-    console.log("Resolved userId:", userId);
 
     const {
       items,
-      subtotal,
-      shipping,
-      total,
       shippingMethod,
       billingSame,
       shippingAddress,
@@ -34,19 +31,63 @@ router.post("/create", optionalAuth, async (req, res) => {
       source,
     } = req.body;
 
+    // ✅ Validate items
     if (!items || items.length === 0) {
       return res.status(400).json({ success: false, error: "Cart is empty" });
     }
+
+    // ✅ Validate payment method
+    if (!["cod", "razorpay"].includes(paymentMethod)) {
+      return res.status(400).json({ error: "Invalid payment method" });
+    }
+
+    // =========================
+    // 🔐 SECURE PRICE CALCULATION
+    // =========================
+
+    let calculatedSubtotal = 0;
+    const validatedItems = [];
+
+    for (const item of items) {
+      const product = await Product.findById(item.productId);
+
+      if (!product) {
+        return res.status(400).json({ error: "Invalid product" });
+      }
+
+      const itemTotal = product.price * item.quantity;
+
+      calculatedSubtotal += itemTotal;
+
+      validatedItems.push({
+        productId: product._id,
+        title: product.title,
+        quantity: item.quantity,
+        price: product.price, // ✅ trusted from DB
+        total: itemTotal,
+       mainImage: product.images?.[0] || "default.jpg",
+      });
+    }
+
+    const shippingFee = 100; // you can make dynamic later
+    const finalTotal = calculatedSubtotal + shippingFee;
+
+    // =========================
+    // 👤 Guest Handling (unchanged)
+    // =========================
 
     let guestId = null;
 
     if (!userId) {
       const clientGuestId = req.headers["x-guest-id"];
-      guestId = clientGuestId; // ✅ USE SAME ID AS APP
+      guestId = clientGuestId;
+
       let guest = null;
+
       if (contactEmail) {
         guest = await GuestUser.findOne({ email: contactEmail });
       }
+
       if (!guest) {
         guest = await GuestUser.create({
           guestId,
@@ -60,59 +101,57 @@ router.post("/create", optionalAuth, async (req, res) => {
           zip: shippingAddress.zip || "110045",
           country: shippingAddress.country || "India",
           phone: shippingAddress.phone,
-         
         });
       }
     }
 
-    const orderItems = items.map((i) => ({
-      productId: i.productId || null,
-      bundleId: i.bundleId || null,
-      title: i.title,
-      variant: i.variant || "",
-      quantity: i.quantity,
-      price: i.price,
-      total: i.total || i.quantity * i.price,
-      bundleProducts: i.bundleProducts || [],
-      mainImage: i.mainImage || "",
-    }));
+    // =========================
+    // 📦 Create Order
+    // =========================
 
     const nextSeq = await getNextOrderSeq(new Date().getFullYear());
     const orderNumber = `DD-${new Date().getFullYear()}-${String(nextSeq).padStart(4, "0")}`;
 
     const order = await Order.create({
-      userId: userId || null,           // <-- IMPORTANT: save userId when logged-in
-      guestId: userId ? null : guestId, // clear guestId for logged-in users
+      userId: userId || null,
+      guestId: userId ? null : guestId,
       email: userId ? (req.user.email || contactEmail) : contactEmail,
       orderNumber,
       shippingMethod,
       billingSame,
       shippingAddress,
-      items: orderItems,
-      subtotal,
-      shippingFee: shipping ,
-      total,
+      items: validatedItems, // ✅ secure items
+      subtotal: calculatedSubtotal,
+      shippingFee,
+      total: finalTotal,
       discountCode: discountCode || "",
       paymentMethod,
       source,
-      paymentStatus: paymentMethod === "cod" ? "pending" : "initiated",
+      paymentStatus: "pending",
       orderStatus: "pending",
     });
 
-if (!userId) {
-  await GuestUser.findOneAndUpdate(
-    { email: contactEmail },
-    {
-      $push: { orders: order._id }, // ✅ store ORDER ID (not productId)
-    },
-    { upsert: true }
-  );
-}
+    // =========================
+    // 👤 Guest order linking
+    // =========================
 
-    // Razorpay flow (unchanged)
+    if (!userId) {
+      await GuestUser.findOneAndUpdate(
+        { email: contactEmail },
+        {
+          $push: { orders: order._id },
+        },
+        { upsert: true }
+      );
+    }
+
+    // =========================
+    // 💳 Razorpay Integration
+    // =========================
+
     if (paymentMethod === "razorpay") {
       const razorpayOptions = {
-        amount: total * 100,
+        amount: finalTotal * 100, // 🔥 IMPORTANT (paise)
         currency: "INR",
         receipt: order._id.toString(),
       };
@@ -124,14 +163,19 @@ if (!userId) {
         },
       };
 
-      const razorpayOrder = await axios.post("https://api.razorpay.com/v1/orders", razorpayOptions, razorpayAuth);
+      const razorpayOrder = await axios.post(
+        "https://api.razorpay.com/v1/orders",
+        razorpayOptions,
+        razorpayAuth
+      );
 
       await Payment.create({
         orderId: order._id,
         razorpayOrderId: razorpayOrder.data.id,
-        amount: total,
+        amount: finalTotal,
         currency: "INR",
         status: "pending",
+         method: "razorpay",
       });
 
       order.razorpayOrderId = razorpayOrder.data.id;
@@ -141,18 +185,21 @@ if (!userId) {
         success: true,
         orderNumber,
         orderId: order._id,
-        amount: total,
+        amount: finalTotal, // frontend will use this
         currency: "INR",
         razorpayOrderId: razorpayOrder.data.id,
       });
     }
 
-    // send email (unchanged)
+    // =========================
+    // 📩 COD Email
+    // =========================
+
     try {
       const { subject, text, html } = templateForStatus("placed", { order });
       await sendEmail({ to: order.email, subject, text, html });
     } catch (err) {
-      console.error("Error sending order email:", err.message);
+      console.error("Email error:", err.message);
     }
 
     res.json({
@@ -161,6 +208,7 @@ if (!userId) {
       orderId: order._id,
       message: "Order placed successfully (COD)",
     });
+
   } catch (err) {
     console.error("Error creating order:", err);
     res.status(500).json({ success: false, error: err.message });
@@ -168,26 +216,90 @@ if (!userId) {
 });
 
 
-// Razorpay payment success webhook
+
+
 router.post("/payment-success", async (req, res) => {
   try {
-    const { razorpay_payment_id, razorpay_order_id, razorpay_signature } = req.body;
-    const payment = await Payment.findOne({ razorpayOrderId: razorpay_order_id });
-    if (!payment) return res.status(404).json({ success: false, message: "Payment not found" });
+    const {
+      orderId,
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+    } = req.body;
 
-    payment.razorpayPaymentId = razorpay_payment_id;
-    payment.razorpaySignature = razorpay_signature;
-    payment.status = "success";
-    await payment.save();
+    // =========================
+    // 🔐 1. VERIFY SIGNATURE
+    // =========================
 
-    const order = await Order.findById(payment.orderId);
-    order.payment.status = "success";
-    order.payment.razorpayPaymentId = razorpay_payment_id;
+    const body = razorpay_order_id + "|" + razorpay_payment_id;
+
+    const expectedSignature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_SECRET)
+      .update(body.toString())
+      .digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid payment signature",
+      });
+    }
+
+    // =========================
+    // 📦 2. FIND ORDER
+    // =========================
+
+    const order = await Order.findById(orderId);
+
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" });
+    }
+
+    // =========================
+    // 🔁 3. PREVENT DOUBLE PAYMENT
+    // =========================
+
+    if (order.paymentStatus === "paid") {
+      return res.json({ success: true, message: "Already paid" });
+    }
+
+    // =========================
+    // 💳 4. UPDATE PAYMENT
+    // =========================
+
+    await Payment.findOneAndUpdate(
+      { razorpayOrderId: razorpay_order_id },
+      {
+        razorpayPaymentId: razorpay_payment_id,
+        status: "paid",
+      }
+    );
+
+    // =========================
+    // ✅ 5. UPDATE ORDER
+    // =========================
+
+    order.paymentStatus = "success";
+    order.orderStatus = "confirmed";
     await order.save();
 
-    res.json({ success: true, message: "Payment recorded successfully" });
+    // =========================
+    // 📩 6. OPTIONAL: SEND EMAIL
+    // =========================
+    try {
+      const { subject, text, html } = templateForStatus("paid", { order });
+      await sendEmail({ to: order.email, subject, text, html });
+    } catch (err) {
+      console.error("Email error:", err.message);
+    }
+
+    res.json({
+      success: true,
+      message: "Payment verified successfully",
+    });
+
   } catch (err) {
-    console.error("Payment success error:", err);
+    console.error("Payment verification error:", err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -321,7 +433,7 @@ router.get("/mine", optionalAuth, async (req, res) => {
     } else {
       return res.status(400).json({ error: "No identity" });
     }
-console.log("Fetched orders:", orders.length);
+
     res.json({
       orders: orders.sort((a, b) => b.createdAt - a.createdAt),
     });
