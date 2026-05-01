@@ -86,6 +86,7 @@ router.get("/:id", requireAuth, async (req, res) => {
 // 🔥 UPDATE ADDRESS
 router.put("/:id", requireAuth, async (req, res) => {
   try {
+    console.log("Updating address:", { userId: req.user.id, addressId: req.params.id, body: req.body });
     const user = await User.findById(req.user.id);
 
     const addr = user.addresses.id(req.params.id);

@@ -8,7 +8,7 @@ export function requireAuth(req, res, next) {
   const token = authHeader.startsWith("Bearer ")
     ? authHeader.slice(7)
     : null;
-console.log("requireAuth - authHeader:", authHeader);
+    
   if (!token) {
     return res.status(401).json({ error: "Unauthorized" });
   }

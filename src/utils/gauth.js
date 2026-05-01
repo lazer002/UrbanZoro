@@ -81,6 +81,14 @@ export const googleLogin = async (req, res) => {
     const accessToken = signAccessToken(jwtPayload);
     const refreshToken = signRefreshToken(jwtPayload);
 
+    res.cookie("refreshToken", refreshToken, {
+  httpOnly: true,
+  secure: false,        // true in production (HTTPS)
+  sameSite: "lax",      // or "none" if cross-site + HTTPS
+  path: "/",
+  maxAge: 30 * 24 * 60 * 60 * 1000,
+});
+
     res.json({
       user: {
         id: user._id.toString(),
@@ -94,7 +102,7 @@ export const googleLogin = async (req, res) => {
         lastLogin: user.lastLogin,
       },
       accessToken,
-      refreshToken,
+    
     });
   } catch (err) {
     console.error('Google login error:', err);

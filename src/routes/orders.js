@@ -311,7 +311,6 @@ router.get("/mine", optionalAuth, async (req, res) => {
     const userId = req.user?.id;
     const guestId = req.headers["x-guest-id"];
 
-    console.log("Fetching orders:", { userId, guestId });
 
     let orders = [];
 

@@ -5,6 +5,32 @@ import { Category } from '../models/Category.js';
 
 const router = express.Router()
 
+router.get("/by-ids", async (req, res) => {
+  try {
+    const ids = req.query.ids?.split(",") || [];
+
+    const validIds = ids.filter((id) =>
+      /^[0-9a-fA-F]{24}$/.test(id)
+    );
+
+    if (!validIds.length) {
+      return res.json({ items: [] });
+    }
+
+    const products = await Product.find({
+      _id: { $in: validIds },
+      published: true,
+    });
+
+    res.json({ items: products });
+  } catch (err) {
+    console.error("by-ids error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+
+
 router.get("/", async (req, res) => {
   try {
 
@@ -51,35 +77,6 @@ router.get("/", async (req, res) => {
   }
 });
 
-
-
-router.get('/:id', async (req, res) => {
-  console.log(req.body)
-  const product = await Product.findById(req.params.id)
-  if (!product || !product.published) return res.status(404).json({ error: 'Not found' })
-  res.json(product)
-})
-
-// Admin CRUD
-router.post('/', requireAuth, requireAdmin, async (req, res) => {
-  console.log(req.body)
-  const product = await Product.create(req.body)
-  res.status(201).json(product)
-})
-
-router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
-  console.log(req.body)
-  const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
-  if (!product) return res.status(404).json({ error: 'Not found' })
-  res.json(product)
-})
-
-router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
-  const product = await Product.findByIdAndDelete(req.params.id)
-  if (!product) return res.status(404).json({ error: 'Not found' })
-  res.json({ ok: true })
-})
-
 router.get("/search", async (req, res) => {
   try {
     console.log("Search query:", req.query);
@@ -115,7 +112,33 @@ router.get("/search", async (req, res) => {
 });
 
 
+// Admin CRUD
+router.post('/', requireAuth, requireAdmin, async (req, res) => {
+  console.log(req.body)
+  const product = await Product.create(req.body)
+  res.status(201).json(product)
+})
 
+router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
+  console.log(req.body)
+  const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
+  if (!product) return res.status(404).json({ error: 'Not found' })
+  res.json(product)
+})
+
+router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
+  const product = await Product.findByIdAndDelete(req.params.id)
+  if (!product) return res.status(404).json({ error: 'Not found' })
+  res.json({ ok: true })
+})
+
+
+router.get('/:id([0-9a-fA-F]{24})', async (req, res) => {
+  console.log(req.body)
+  const product = await Product.findById(req.params.id)
+  if (!product || !product.published) return res.status(404).json({ error: 'Not found' })
+  res.json(product)
+})
 
 
 export default router

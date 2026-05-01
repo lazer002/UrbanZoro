@@ -5,37 +5,24 @@ import { googleLogin, googleLoginMobile } from '../utils/gauth.js'
 import { OTP } from '../models/Otp.js'
 import bcrypt from 'bcryptjs'
 import { sendOtpMail } from '../utils/mailer.js'
+import { requireAuth } from '../middleware/auth.js'
 const router = express.Router()
 
 router.post('/register', async (req, res) => {
   try {
-    console.log("Registration request body:", req.body);
-    const { email, name, password } = req.body
-    if (!email || !name || !password) return res.status(400).json({ error: 'Missing fields' })
-    const existing = await User.findOne({ email })
-    if (existing) return res.status(409).json({ error: 'Email already registered' })
-    const passwordHash = await User.hashPassword(password)
-    const user = await User.create({ email, name, passwordHash })
-    const payload = { id: user._id.toString(), role: user.role, email: user.email, name: user.name }
-    res.json({
-      user: { id: payload.id, email: user.email, name: user.name, role: user.role },
-      accessToken: signAccessToken(payload),
-      refreshToken: signRefreshToken(payload)
-    })
-  } catch (e) {
-    res.status(500).json({ error: 'Registration failed' })
-  }
-})
+    const { email, name, password } = req.body;
 
-// POST /auth/login
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!email || !name || !password) {
+      return res.status(400).json({ error: 'Missing fields' });
+    }
 
-    const ok = await user.verifyPassword(password);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    const existing = await User.findOne({ email });
+    if (existing) {
+      return res.status(409).json({ error: 'Email already registered' });
+    }
+
+    const passwordHash = await User.hashPassword(password);
+    const user = await User.create({ email, name, passwordHash });
 
     const payload = {
       id: user._id.toString(),
@@ -44,36 +31,123 @@ router.post('/login', async (req, res) => {
       name: user.name,
     };
 
+    const isMobile = req.headers["x-platform"] === "mobile";
+
     const accessToken = signAccessToken(payload);
     const refreshToken = signRefreshToken(payload);
 
-    // Set refresh token as an httpOnly cookie (do NOT expose it to JS)
-    const cookieOptions = {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production', // true in prod (HTTPS)
-      sameSite: 'lax', // or 'none' if cross-site and using HTTPS
-      path: '/',
-      // optionally set maxAge (in ms). adjust to your refresh token lifetime
-      maxAge: 30 * 24 * 60 * 60 * 1000, // example: 30 days
+    // 🔥 WEB → set cookie
+    if (!isMobile) {
+      res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: false, // true in production (HTTPS)
+        sameSite: "lax",
+        path: "/",
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      });
+
+      return res.json({
+        user: {
+          id: payload.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+        accessToken,
+      });
+    }
+
+    // 🔥 MOBILE → send refreshToken
+    return res.json({
+      user: {
+        id: payload.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+      accessToken,
+      refreshToken,
+    });
+
+  } catch (e) {
+    console.error("Register error:", e);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// POST /auth/login
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const ok = await user.verifyPassword(password);
+    if (!ok) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const payload = {
+      id: user._id.toString(),
+      role: user.role,
+      email: user.email,
+      name: user.name,
     };
 
-    res.cookie('refreshToken', refreshToken, cookieOptions);
+    const isMobile = req.headers["x-platform"] === "mobile";
 
-    // Return user + access token only (no refreshToken in response body)
-    res.json({
-      user: { id: payload.id, email: user.email, name: user.name, role: user.role },
+    const accessToken = signAccessToken(payload);
+    const refreshToken = signRefreshToken(payload);
+
+    // 🔥 WEB → set cookie
+    if (!isMobile) {
+      res.cookie("refreshToken", refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+      });
+
+      return res.json({
+        user: {
+          id: payload.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+        },
+        accessToken,
+      });
+    }
+
+    // 🔥 MOBILE → send refreshToken in body
+    return res.json({
+      user: {
+        id: payload.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
       accessToken,
+      refreshToken,
     });
+
   } catch (e) {
     console.error('Login error:', e);
     res.status(500).json({ error: 'Login failed' });
   }
 });
 
-
 router.post('/refresh', async (req, res) => {
   try {
-    const refreshToken = req.cookies?.refreshToken; 
+    console.log("cookies:", req.cookies);
+
+    const refreshToken =
+      req.cookies?.refreshToken || req.body?.refreshToken;
+
     if (!refreshToken) {
       return res.status(400).json({ error: 'Missing refreshToken' });
     }
@@ -84,14 +158,25 @@ router.post('/refresh', async (req, res) => {
       id: payload.id,
       role: payload.role,
       email: payload.email,
-      name: payload.name
+      name: payload.name,
     });
 
-    res.json({ accessToken });
+    return res.json({ accessToken });
 
   } catch (e) {
-    res.clearCookie("refreshToken");
-    res.status(401).json({ error: 'Invalid refresh token' });
+    console.error("Refresh error:", e);
+
+    // 🔥 only clear cookie if it exists (web case)
+    if (req.cookies?.refreshToken) {
+      res.clearCookie("refreshToken", {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        path: "/",
+      });
+    }
+
+    return res.status(401).json({ error: 'Invalid refresh token' });
   }
 });
 
@@ -233,6 +318,29 @@ router.post("/change-password", async (req, res) => {
 });
 
 
+router.get("/me",requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id; 
+
+    const user = await User.findById(userId).select("-password");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      user,
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false });
+  }
+});
 
 router.post("/google", googleLogin);
 router.post("/google/mobile", googleLoginMobile);
