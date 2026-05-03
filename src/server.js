@@ -55,7 +55,7 @@ app.use(cors({
 /* -------------------------------------------------------------------------- */
 /*                             PARSERS & LOGGING                               */
 /* -------------------------------------------------------------------------- */
-
+app.use("/api/orders/webhook", express.raw({ type: "application/json" }));
 app.use(express.json())
 app.use(cookieParser())    // <-- ADD THIS
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'))
