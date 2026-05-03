@@ -21,7 +21,18 @@ import returnsRouter from './routes/return.js'
 import notificationRoutes from './routes/notification.js'
 import user from './routes/user.js'
 import address from './routes/address.js'
+import newsletter from './routes/newsletter.js'
+import contect from './routes/contect.js'
+import productRequestRouter from './routes/product-request.js'
 
+
+dotenv.config()
+import rateLimit from "express-rate-limit";
+
+const limiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 3, 
+});
 dotenv.config()
 
 const app = express()
@@ -87,7 +98,11 @@ app.use('/api/wishlist', wishlistRouter)
 app.use('/api/returns', returnsRouter)
 app.use("/api/notifications", notificationRoutes);
 app.use('/api/user', user)
-app.use('/api/address', address) // <-- ADD THIS
+app.use('/api/address', address)
+app.use('/api/newsletter',limiter, newsletter)
+app.use('/api/contact', limiter, contect)
+app.use('/api/product-request', productRequestRouter)
+
 
 /* -------------------------------------------------------------------------- */
 /*                           SERVER START + LOCAL IP                           */
