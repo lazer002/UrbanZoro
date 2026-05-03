@@ -1,20 +1,26 @@
 import express from 'express'
 import { CartItem } from '../models/CartItem.js'
 import { Product } from '../models/Product.js'
-import { requireAuth } from '../middleware/auth.js'
+import { optionalAuth, requireAuth } from '../middleware/auth.js'
 import mongoose from 'mongoose'
 const router = express.Router()
 
 // Helper to get cart key (user or guest)
 function cartKey(req) {
-  if (req.user?.id) return { user: req.user.id }
-  const guestId = req.headers['x-guest-id']
-  if (!guestId || typeof guestId !== 'string') return null
-  return { guestId }
+  if (req.user?.id) {
+    return { user: req.user.id }; // 🔥 ALWAYS priority
+  }
+
+  if (req.guestId) {
+    return { guestId: req.guestId };
+  }
+
+  return null;
 }
 
-router.get('/', async (req, res) => {
+router.get('/',optionalAuth, async (req, res) => {
   const key = cartKey(req);
+console.log("Fetch cart items with key:", key);
 
   try {
     const items = await CartItem.find(key)
@@ -32,7 +38,7 @@ router.get('/', async (req, res) => {
 
 
 // Add to cart with size support
-router.post('/add', async (req, res) => {
+router.post('/add',optionalAuth, async (req, res) => {
   console.log("Add to cart request body:", req.body);
   const key = cartKey(req); // { user: userId } or { guestId }
   const { productId, quantity = 1, size } = req.body;
@@ -58,7 +64,7 @@ router.post('/add', async (req, res) => {
   res.json({ message: 'Added to cart', item });
 });
 
-router.post('/addbundle', async (req, res) => {
+router.post('/addbundle', optionalAuth, async (req, res) => {
   console.log("Add bundle to cart request body:", req.body);
   const key = cartKey(req);
   const { bundleId, bundleProducts, quantity = 1, mainImage } = req.body;
@@ -165,7 +171,7 @@ router.post('/addbundle', async (req, res) => {
 
 
 // 🛒 Update item (works for both product & bundle)
-router.post('/update', async (req, res) => {
+router.post('/update', optionalAuth, async (req, res) => {
   console.log("Update cart item request body000000:", req.body);
   const key = cartKey(req);
   const { productId, size, bundleId, quantity } = req.body;
@@ -202,7 +208,7 @@ router.post('/update', async (req, res) => {
 });
 
 
-router.post('/remove', async (req, res) => {
+router.post('/remove',optionalAuth, async (req, res) => {
   const key = cartKey(req);
   const { productId, size, bundleId } = req.body;
 
@@ -221,7 +227,7 @@ router.post('/remove', async (req, res) => {
   res.json({ message: 'Item removed from cart', item: result });
 });
 
-router.post('/clear', async (req, res) => {
+router.post('/clear',optionalAuth, async (req, res) => {
   try {
     const key = cartKey(req); // returns { user: userId } or { guestId }
     if (!key) {
@@ -240,6 +246,8 @@ router.post('/clear', async (req, res) => {
   }
 });
 // Merge guest cart after login
+
+
 router.post('/merge', requireAuth, async (req, res) => {
   const { guestId } = req.body
   if (!guestId) return res.status(400).json({ error: 'Missing guestId' })
