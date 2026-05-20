@@ -6,43 +6,99 @@ const router = express.Router();
 
 
 router.get("/products", async (req, res) => {
-  try {
-    console.log("Search query:", req.query);
-    const { q } = req.query;
 
-    if (!q || q.trim() === "") {
-      return res.status(400).json({ error: "Query parameter 'q' is required" });
+  try {
+
+    const q = req.query.q?.trim();
+
+    if (!q || q.length < 2) {
+      return res.status(200).json([]);
     }
 
-    const regex = new RegExp(q, "i");
-
-    // Find matching categories
-    const categories = await Category.find({ name: regex }).select("_id").lean();
-    const categoryIds = categories.map(c => c._id);
-
-    const products = await Product.find({
-      published: true,
-      $or: [
-        { title: regex },
-        { description: regex },
-        ...(categoryIds.length ? [{ category: { $in: categoryIds } }] : []),
-      ],
-    })
-      .select("title price images category sku") // return only essential fields
-      .limit(20)
+    // FIND CATEGORY IDS
+    const matchingCategories =
+      await Category.find(
+        {
+          name: {
+            $regex: q,
+            $options: "i",
+          },
+        }
+      )
+      .select("_id")
       .lean();
 
-    if (products.length === 0) {
-      return res.status(404).json({ message: "No matching products found" });
-    }
+    const categoryIds =
+      matchingCategories.map(
+        c => c._id
+      );
 
-    res.status(200).json(products);
+    // PRODUCT SEARCH
+    const products = await Product.find(
+      {
+        published: true,
+
+        $or: [
+
+          {
+            $text: {
+              $search: q,
+            },
+          },
+
+          ...(categoryIds.length
+            ? [
+                {
+                  category: {
+                    $in: categoryIds,
+                  },
+                },
+              ]
+            : []),
+        ],
+      },
+
+      {
+        score: {
+          $meta: "textScore",
+        },
+
+        title: 1,
+        price: 1,
+        images: 1,
+        category: 1,
+        sku: 1,
+        inventory: 1,
+        onSale: 1,
+      }
+    )
+
+      .sort({
+        score: {
+          $meta: "textScore",
+        },
+      })
+
+      .limit(20)
+
+      .lean();
+
+    return res.status(200).json(products);
+
   } catch (error) {
-    console.error("Search API error:", error);
-    res.status(500).json({ error: "Server error" });
-  }
-});
 
+    console.error(
+      "Search API error:",
+      error
+    );
+
+    return res.status(500).json({
+      error: "Server error",
+    });
+
+  }
+
+});
 
 
 router.get("/filter", async (req, res) => {

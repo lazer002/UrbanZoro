@@ -29,7 +29,11 @@ const productSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-
+categoryName: {
+  type: String,
+  trim: true,
+  index: true,
+}, // denormalized for search
     sizes: {
       type: [String],
       enum: ["XS", "S", "M", "L", "XL", "XXL"],
@@ -38,6 +42,13 @@ const productSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+productSchema.index({
+  title: "text",
+  description: "text",
+  category: "text",
+  sku: "text",
+});
 
 // Auto-generate SKU if not provided
 productSchema.pre("validate", async function (next) {

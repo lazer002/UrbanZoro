@@ -32,49 +32,360 @@ router.get("/by-ids", async (req, res) => {
 
 
 router.get("/", async (req, res) => {
+
   try {
 
-    console.log('s',req.query)
-    res.set("Cache-Control", "no-store"); // disable caching
-    const { category, q, limit, page, sort } = req.query;
-    const filter = { published: true };
+    console.log("QUERY:", req.query);
 
-   if (category && category !== "All") {
-      const isObjectId = /^[0-9a-fA-F]{24}$/.test(category);
+    res.set("Cache-Control", "no-store");
+
+    const {
+
+      category,
+      q,
+
+      limit = 10,
+      page = 1,
+
+      sort = "newest",
+
+      priceRange,
+
+      color,
+      size,
+      fabric,
+      fit,
+
+      inStock,
+      isNew,
+      onSale,
+
+    } = req.query;
+
+    // FILTER OBJECT
+    const filter = {
+      published: true,
+    };
+
+    /*
+    ========================
+    CATEGORY
+    ========================
+    */
+
+    if (
+      category &&
+      category !== "All"
+    ) {
+
+      const isObjectId =
+        /^[0-9a-fA-F]{24}$/.test(
+          category
+        );
 
       if (isObjectId) {
-        filter.category = category;
-      } else {
-        const cat = await Category.findOne({
-          $or: [
-            { name: { $regex: `^${category}$`, $options: "i" } },
-            { slug: { $regex: `^${category}$`, $options: "i" } },
-          ],
-        });
 
-        if (cat) filter.category = cat._id;
+        filter.category = category;
+
+      } else {
+
+        const cat =
+          await Category.findOne({
+            $or: [
+              {
+                name: {
+                  $regex: `^${category}$`,
+                  $options: "i",
+                },
+              },
+              {
+                slug: {
+                  $regex: `^${category}$`,
+                  $options: "i",
+                },
+              },
+            ],
+          });
+
+        if (cat) {
+          filter.category = cat._id;
+        }
+
       }
+
     }
+
+    /*
+    ========================
+    SEARCH
+    ========================
+    */
 
     if (q) {
-      filter.title = { $regex: q, $options: "i" };
-    }
-    let sortOption = { createdAt: -1 };
-    if (sort === "low-high") sortOption = { price: 1 };      // Price ascending
-    else if (sort === "high-low") sortOption = { price: -1 }; // Price descending
-    else if (sort === "popular") sortOption = { sold: -1 };
 
-    const total = await Product.countDocuments(filter);
-    const products = await Product.find(filter)
-      .populate("category", "name slug")
-      .sort(sortOption)
-      .skip((Number(page) - 1) * Number(limit))
-      .limit(Number(limit));
-    res.json({ items: products, total });
+      filter.title = {
+        $regex: q,
+        $options: "i",
+      };
+
+    }
+
+    /*
+    ========================
+    PRICE RANGE
+    ========================
+    */
+
+    if (priceRange) {
+
+      if (priceRange === "0-500") {
+
+        filter.price = {
+          $gte: 0,
+          $lte: 500,
+        };
+
+      }
+
+      else if (
+        priceRange === "500-1000"
+      ) {
+
+        filter.price = {
+          $gte: 500,
+          $lte: 1000,
+        };
+
+      }
+
+      else if (
+        priceRange === "1000-2000"
+      ) {
+
+        filter.price = {
+          $gte: 1000,
+          $lte: 2000,
+        };
+
+      }
+
+      else if (
+        priceRange === "2000+"
+      ) {
+
+        filter.price = {
+          $gte: 2000,
+        };
+
+      }
+
+    }
+
+    /*
+    ========================
+    COLOR
+    ========================
+    */
+
+    if (color) {
+
+      filter.colors = {
+        $in: Array.isArray(color)
+          ? color
+          : [color],
+      };
+
+    }
+
+    /*
+    ========================
+    SIZE
+    ========================
+    */
+
+    if (size) {
+
+      filter.sizes = {
+        $in: Array.isArray(size)
+          ? size
+          : [size],
+      };
+
+    }
+
+    /*
+    ========================
+    FABRIC
+    ========================
+    */
+
+    if (fabric) {
+
+      filter.fabric = {
+        $in: Array.isArray(fabric)
+          ? fabric
+          : [fabric],
+      };
+
+    }
+
+    /*
+    ========================
+    FIT
+    ========================
+    */
+
+    if (fit) {
+
+      filter.fit = {
+        $in: Array.isArray(fit)
+          ? fit
+          : [fit],
+      };
+
+    }
+
+    /*
+    ========================
+    STOCK
+    ========================
+    */
+
+    if (inStock === "true") {
+
+      filter.stock = {
+        $gt: 0,
+      };
+
+    }
+
+    /*
+    ========================
+    SALE
+    ========================
+    */
+
+    if (onSale === "true") {
+
+      filter.onSale = true;
+
+    }
+
+    /*
+    ========================
+    NEW ARRIVALS
+    ========================
+    */
+
+    if (isNew === "true") {
+
+      filter.isNewProduct = true;
+
+    }
+
+    /*
+    ========================
+    SORTING
+    ========================
+    */
+
+    let sortOption = {
+      createdAt: -1,
+    };
+
+    if (sort === "low-high") {
+
+      sortOption = {
+        price: 1,
+      };
+
+    }
+
+    else if (
+      sort === "high-low"
+    ) {
+
+      sortOption = {
+        price: -1,
+      };
+
+    }
+
+    else if (
+      sort === "popular"
+    ) {
+
+      sortOption = {
+        sold: -1,
+      };
+
+    }
+
+    /*
+    ========================
+    TOTAL COUNT
+    ========================
+    */
+
+    const total =
+      await Product.countDocuments(
+        filter
+      );
+
+    /*
+    ========================
+    PRODUCTS
+    ========================
+    */
+
+    const products =
+      await Product.find(filter)
+
+        .populate(
+          "category",
+          "name slug"
+        )
+
+        .sort(sortOption)
+
+        .skip(
+          (Number(page) - 1) *
+          Number(limit)
+        )
+
+        .limit(Number(limit));
+
+    /*
+    ========================
+    RESPONSE
+    ========================
+    */
+
+    return res.json({
+
+      items: products,
+
+      total,
+
+      currentPage:
+        Number(page),
+
+      totalPages: Math.ceil(
+        total / Number(limit)
+      ),
+
+    });
+
   } catch (error) {
+
     console.error(error);
-    res.status(500).json({ message: "Server error" });
+
+    return res.status(500).json({
+      message: "Server error",
+    });
+
   }
+
 });
 
 router.get("/search", async (req, res) => {
@@ -96,7 +407,7 @@ router.get("/search", async (req, res) => {
         { description: regex },
       ],
     })
-      .select("title price images category sku") // return only essential fields
+      .select("title price images category sku inventory") // return only essential fields
       .limit(20)
       .lean();
 
