@@ -664,7 +664,7 @@ router.get("/:id", async (req, res) => {
   const order = await Order.findById(req.params.id);
   res.json({ order });
 });
-router.put("/cancel", async (req, res) => {
+router.put("/cancel",optionalAuth, async (req, res) => {
   try {
     const { orderId } = req.body;
     const guestId = req.headers["x-guest-id"];
@@ -712,4 +712,5 @@ router.put("/cancel", async (req, res) => {
     res.status(500).json({ error: "Cancel failed" });
   }
 });
+
 export default router;
