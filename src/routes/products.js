@@ -35,7 +35,6 @@ router.get("/", async (req, res) => {
 
   try {
 
-    console.log("QUERY:", req.query);
 
     res.set("Cache-Control", "no-store");
 
@@ -44,7 +43,7 @@ router.get("/", async (req, res) => {
       category,
       q,
 
-      limit = 10,
+      limit = 100,
       page = 1,
 
       sort = "newest",

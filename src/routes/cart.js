@@ -67,9 +67,9 @@ router.post('/add',optionalAuth, async (req, res) => {
 router.post('/addbundle', optionalAuth, async (req, res) => {
   console.log("Add bundle to cart request body:", req.body);
   const key = cartKey(req);
-  const { bundleId, bundleProducts, quantity = 1, mainImage } = req.body;
+  const { bundleId,customBundle, bundleProducts, quantity = 1, mainImage } = req.body;
 
-  if (!key || !bundleId || !Array.isArray(bundleProducts) || bundleProducts.length === 0)
+  if (!key || (!bundleId && !customBundle) || !Array.isArray(bundleProducts) || bundleProducts.length === 0)
     return res.status(400).json({ error: 'Missing fields' });
 
   for (const p of bundleProducts) {
@@ -99,10 +99,18 @@ router.post('/addbundle', optionalAuth, async (req, res) => {
   const newSig = canonical(forCompare);
 
   try {
-    const existingRows = await CartItem.find({
-      ...key,
-      bundle: mongoose.isValidObjectId(bundleId) ? new mongoose.Types.ObjectId(bundleId) : bundleId,
-    }).exec();
+const filter = { ...key };
+
+if (bundleId) {
+  filter.bundle = new mongoose.Types.ObjectId(bundleId);
+}
+
+if (customBundle) {
+  filter["customBundle.title"] = customBundle.title;
+  filter["customBundle.price"] = customBundle.price;
+}
+
+const existingRows = await CartItem.find(filter).exec();
 
     const matchingRow = existingRows.find((row) => {
       const existingCompare = (row.bundleProducts || []).map(bp => ({
@@ -123,14 +131,23 @@ router.post('/addbundle', optionalAuth, async (req, res) => {
       ]);
       return res.json({ message: 'Bundle quantity updated', item: matchingRow });
     }
+    
+const createDoc = {
+  ...key,
+  mainImage: mainImage || null,
+  bundleProducts: forSave,
+  quantity: Number(quantity || 1),
+};
 
-    const createDoc = {
-      ...key,
-      bundle: mongoose.isValidObjectId(bundleId) ? new mongoose.Types.ObjectId(bundleId) : bundleId,
-      mainImage: mainImage || null,
-      bundleProducts: forSave,
-      quantity: Number(quantity || 1),
-    };
+if (bundleId) {
+  createDoc.bundle =
+    new mongoose.Types.ObjectId(bundleId);
+}
+
+if (customBundle) {
+  createDoc.customBundle =
+    customBundle;
+}
     delete createDoc.product;
     delete createDoc.size;
 
@@ -139,10 +156,19 @@ router.post('/addbundle', optionalAuth, async (req, res) => {
       newItem = await CartItem.create(createDoc);
     } catch (err) {
       if (err && err.code === 11000) {
-        const doc = await CartItem.findOne({
-          ...key,
-          bundle: mongoose.isValidObjectId(bundleId) ? new mongoose.Types.ObjectId(bundleId) : bundleId,
-        });
+const filter = { ...key };
+
+if (bundleId) {
+  filter.bundle = new mongoose.Types.ObjectId(bundleId);
+}
+
+if (customBundle) {
+  filter["customBundle.title"] = customBundle.title;
+  filter["customBundle.price"] = customBundle.price;
+
+}
+
+const doc = await CartItem.findOne(filter);
         if (doc) {
           doc.quantity = (doc.quantity || 0) + Number(quantity || 1);
           await doc.save();
@@ -174,15 +200,15 @@ router.post('/addbundle', optionalAuth, async (req, res) => {
 router.post('/update', optionalAuth, async (req, res) => {
   console.log("Update cart item request body000000:", req.body);
   const key = cartKey(req);
-  const { productId, size, bundleId, quantity } = req.body;
+  const { productId, size,  cartItemId, quantity } = req.body;
 
   if (!key || quantity == null)
     return res.status(400).json({ error: 'Missing required fields' });
 
   // 🧹 If quantity <= 0, just delete it
   if (quantity <= 0) {
-    const filter = bundleId
-      ? { ...key, bundle: bundleId }
+    const filter =  cartItemId
+      ? { ...key, bundle:  cartItemId }
       : { ...key, product: productId, size };
 
     await CartItem.findOneAndDelete(filter);
@@ -190,8 +216,8 @@ router.post('/update', optionalAuth, async (req, res) => {
   }
 
   // 🧠 Build the filter
-  const filter = bundleId
-    ? { ...key, bundle: bundleId }
+  const filter =  cartItemId
+    ? { ...key, bundle:  cartItemId }
     : { ...key, product: productId, size };
 
   // 🔁 Update quantity
@@ -210,13 +236,13 @@ router.post('/update', optionalAuth, async (req, res) => {
 
 router.post('/remove',optionalAuth, async (req, res) => {
   const key = cartKey(req);
-  const { productId, size, bundleId } = req.body;
-
-  if (!key || (!productId && !bundleId))
+  console.log("Remove cart item request body:", req.body);
+  const { productId, size, cartItemId } = req.body;
+  if (!key || (!productId && !cartItemId))
     return res.status(400).json({ error: 'Missing required fields' });
 
-  const filter = bundleId
-    ? { ...key, bundle: bundleId }
+  const filter = cartItemId
+    ? { ...key, _id: cartItemId }
     : { ...key, product: productId, size };
 
   const result = await CartItem.findOneAndDelete(filter);

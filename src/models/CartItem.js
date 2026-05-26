@@ -16,6 +16,11 @@ const cartItemSchema = new mongoose.Schema({
 
   // Bundle
   bundle: { type: mongoose.Schema.Types.ObjectId, ref: "Bundle" },
+  customBundle: {
+  title: String,
+  price: Number,
+  mainImage: String,
+},
   mainImage: { type: String },
   bundleProducts: { type: [bundleProductSchema], default: undefined },
 
@@ -24,10 +29,11 @@ const cartItemSchema = new mongoose.Schema({
 
 // Clean up fields automatically
 cartItemSchema.pre("validate", function(next) {
-  if (this.bundle) {
+  if (this.bundle || this.customBundle) {
     this.product = undefined;
     this.size = undefined;
   }
+
   next();
 });
 
