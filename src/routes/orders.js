@@ -17,7 +17,7 @@ const router = express.Router();
 
 router.post("/create", optionalAuth, async (req, res) => {
   try {
-    console.log("Create order request body:", req.body.items);
+    console.log("Create order request body:", JSON.stringify(req.body.items));
     // return
 
     const userId = req.user?.id || req.user?._id || null;
@@ -48,8 +48,8 @@ router.post("/create", optionalAuth, async (req, res) => {
     let calculatedSubtotal = 0;
     const validatedItems = [];
     for (const item of items) {
-  let data = null;
-  let isBundle = false;
+      let data = null;
+      let isBundle = false;
 
 
 if (item.bundleId) {
@@ -95,6 +95,54 @@ if (item.bundleId) {
 
   continue;
 }
+
+// =========================
+// 🎁 HANDLE CUSTOM BUNDLE
+// =========================
+if (item.customBundle) {
+  let customBundlePrice = 0;
+  const bundleProductsValidated = [];
+
+  for (const bp of item.bundleProducts || []) {
+    const product = await Product.findById(bp.productId);
+
+    if (!product) {
+      return res.status(400).json({
+        error: "Invalid bundle product",
+      });
+    }
+
+    const qty = bp.quantity || 1;
+    customBundlePrice += product.price * qty;
+
+    bundleProductsValidated.push({
+      productId: product._id,
+      title: product.title,
+      variant: bp.variant || "",
+      quantity: qty,
+      price: product.price,
+      mainImage: product.images?.[0] || "",
+    });
+  }
+
+  const itemTotal = customBundlePrice * item.quantity;
+  calculatedSubtotal += itemTotal;
+
+  validatedItems.push({
+    customBundle: true,
+    title: item.title || "Custom Bundle",
+    quantity: item.quantity,
+    price: customBundlePrice,
+    total: itemTotal,
+    mainImage: item.mainImage || "",
+    bundleProducts: bundleProductsValidated,
+  });
+
+  continue;
+}
+
+
+
   // =========================
   // 🛍️ HANDLE PRODUCT
   // =========================
