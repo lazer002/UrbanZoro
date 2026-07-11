@@ -84,6 +84,7 @@ if (item.bundleId) {
   // ✅ NOW push (correct place)
   validatedItems.push({
     bundleId: bundle._id,
+    customBundle: false,
     title: bundle.title,
     quantity: item.quantity,
     price: bundle.price,
