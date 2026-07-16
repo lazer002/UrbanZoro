@@ -1,8 +1,8 @@
 import express from 'express'
+import mongoose from 'mongoose'
+import { optionalAuth, requireAuth } from '../middleware/auth.js'
 import { CartItem } from '../models/CartItem.js'
 import { Product } from '../models/Product.js'
-import { optionalAuth, requireAuth } from '../middleware/auth.js'
-import mongoose from 'mongoose'
 const router = express.Router()
 
 // Helper to get cart key (user or guest)
@@ -207,18 +207,18 @@ router.post('/update', optionalAuth, async (req, res) => {
 
   // 🧹 If quantity <= 0, just delete it
   if (quantity <= 0) {
-    const filter =  cartItemId
-      ? { ...key, bundle:  cartItemId }
-      : { ...key, product: productId, size };
+  const filter = cartItemId
+  ? { ...key, _id: cartItemId }
+  : { ...key, product: productId, size };
 
     await CartItem.findOneAndDelete(filter);
     return res.json({ ok: true, message: "Item removed from cart" });
   }
 
   // 🧠 Build the filter
-  const filter =  cartItemId
-    ? { ...key, bundle:  cartItemId }
-    : { ...key, product: productId, size };
+ const filter = cartItemId
+  ? { ...key, _id: cartItemId }
+  : { ...key, product: productId, size };
 
   // 🔁 Update quantity
   const item = await CartItem.findOneAndUpdate(
