@@ -82,25 +82,86 @@ const OrderSchema = new mongoose.Schema(
     razorpayPaymentId: { type: String },
     razorpaySignature: { type: String },
 
-    orderStatus: {
-      type: String,
-      enum: ["pending", "confirmed", "dispatched", "shipped", "out for delivery", "delivered", "cancelled", "refunded"],
-      default: "pending",
-    },
+ orderStatus: {
+  type: String,
+  enum: [
+    "pending",
+    "confirmed",
+    "dispatched",
+    "shipped",
+    "out for delivery",
+    "delivered",
 
-    statusHistory: {
-      type: [
-        {
-          status: {
-            type: String,
-            enum: ["pending", "confirmed", "dispatched", "shipped", "out for delivery", "delivered", "cancelled", "refunded"],
-            required: true,
-          },
-          updatedAt: { type: Date, default: Date.now },
-        },
-      ],
-      default: [],
+    // Return flow
+    "return requested",
+    "return approved",
+    "return rejected",
+    "returned",
+    "refunded",
+
+    // Exchange flow
+    "exchange requested",
+    "exchange approved",
+    "exchange rejected",
+    "exchange processing",
+    "exchanged",
+
+    // Repair flow
+    "repair requested",
+    "repair approved",
+    "repair rejected",
+    "repair processing",
+    "repaired",
+
+    "cancelled",
+  ],
+  default: "pending",
+},
+
+statusHistory: {
+  type: [
+    {
+      status: {
+        type: String,
+        enum: [
+          "pending",
+          "confirmed",
+          "dispatched",
+          "shipped",
+          "out for delivery",
+          "delivered",
+
+          "return requested",
+          "return approved",
+          "return rejected",
+          "returned",
+          "refunded",
+
+          "exchange requested",
+          "exchange approved",
+          "exchange rejected",
+          "exchange processing",
+          "exchanged",
+
+          "repair requested",
+          "repair approved",
+          "repair rejected",
+          "repair processing",
+          "repaired",
+
+          "cancelled",
+        ],
+        required: true,
+      },
+
+      updatedAt: {
+        type: Date,
+        default: Date.now,
+      },
     },
+  ],
+  default: [],
+},
 
     shippingAddress: {
       firstName: String,

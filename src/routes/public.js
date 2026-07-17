@@ -3,7 +3,7 @@ import {Category}  from '../models/Category.js'
 import { upload } from '../middleware/upload.js'
 import { supabase } from '../config/supabase.js'
 import dotenv from 'dotenv'
-import { requireAuth } from '../middleware/auth.js' // new middleware
+import { optionalAuth, requireAuth } from '../middleware/auth.js' // new middleware
 dotenv.config()
 const router = express.Router()
 
@@ -18,7 +18,7 @@ router.get('/categories', async (req, res) => {
 })
 
 
-router.post("/upload/image",requireAuth,upload.single("file"),async (req, res) => {
+router.post("/upload/image",optionalAuth,upload.single("file"),async (req, res) => {
     try {
       console.log("Upload request - user:", req.user);
       if (!req.file) {
