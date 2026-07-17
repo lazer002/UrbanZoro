@@ -101,20 +101,27 @@ if (item.bundleId) {
 // 🎁 HANDLE CUSTOM BUNDLE
 // =========================
 if (item.customBundle) {
-  let customBundlePrice = 0;
+  let originalBundlePrice = 0;
   const bundleProductsValidated = [];
+
+  // ============================================
+  // VALIDATE ALL CUSTOM BUNDLE PRODUCTS
+  // ============================================
 
   for (const bp of item.bundleProducts || []) {
     const product = await Product.findById(bp.productId);
 
     if (!product) {
       return res.status(400).json({
+        success: false,
         error: "Invalid bundle product",
       });
     }
 
-    const qty = bp.quantity || 1;
-    customBundlePrice += product.price * qty;
+    const qty = Number(bp.quantity) || 1;
+
+    // Calculate original price from database
+    originalBundlePrice += product.price * qty;
 
     bundleProductsValidated.push({
       productId: product._id,
@@ -126,17 +133,65 @@ if (item.customBundle) {
     });
   }
 
-  const itemTotal = customBundlePrice * item.quantity;
+  // ============================================
+  // APPLY 10% CUSTOM BUNDLE DISCOUNT
+  // ============================================
+
+  const discountPercentage = 10;
+
+  const discountAmount =
+    originalBundlePrice *
+    (discountPercentage / 100);
+
+  // Final custom bundle selling price
+  const customBundlePrice = Math.round(
+    originalBundlePrice - discountAmount
+  );
+
+  // Quantity of complete custom bundles
+  const bundleQuantity =
+    Number(item.quantity) || 1;
+
+  const itemTotal =
+    customBundlePrice * bundleQuantity;
+
+  // Add discounted amount to order subtotal
   calculatedSubtotal += itemTotal;
+
+  // ============================================
+  // SAVE VALIDATED CUSTOM BUNDLE
+  // ============================================
 
   validatedItems.push({
     customBundle: true,
-    title: item.title || "Custom Bundle",
-    quantity: item.quantity,
-    price: customBundlePrice,
-    total: itemTotal,
-    mainImage: item.mainImage || "",
-    bundleProducts: bundleProductsValidated,
+
+    title:
+      item.title || "Custom Bundle",
+
+    quantity:
+      bundleQuantity,
+
+    // Discounted selling price
+    price:
+      customBundlePrice,
+
+    // Original total product price
+    originalPrice:
+      originalBundlePrice,
+
+    discountPercentage,
+
+    discountAmount:
+      Math.round(discountAmount),
+
+    total:
+      itemTotal,
+ 
+    mainImage:
+      item.mainImage || "",
+
+    bundleProducts:
+      bundleProductsValidated,
   });
 
   continue;
@@ -167,7 +222,7 @@ if (item.customBundle) {
   });
 }
 
-    const shippingFee = 100; // you can make dynamic later
+    const shippingFee = 0; // you can make dynamic later
     const finalTotal = calculatedSubtotal + shippingFee;
 
     // =========================
@@ -450,6 +505,15 @@ router.post("/payment-success", async (req, res) => {
       return res.status(404).json({ error: "Order not found" });
     }
 
+
+
+if (order.razorpayOrderId !== razorpay_order_id) {
+  return res.status(400).json({
+    success: false,
+    error: "Razorpay order mismatch",
+  });
+}
+
     // =========================
     // 🔁 3. PREVENT DOUBLE PROCESS
     // =========================
@@ -473,6 +537,8 @@ router.post("/payment-success", async (req, res) => {
       });
     }
 
+
+    
     // =========================
     // 💰 5. VERIFY WITH RAZORPAY API
     // =========================
@@ -523,6 +589,12 @@ if (paymentData.status !== "captured") {
 
     order.paymentStatus = "paid";
     order.orderStatus = "confirmed";
+
+    order.statusHistory.push({
+      status: "confirmed",
+      updatedAt: new Date(),
+    });
+
     await order.save();
 
     // =========================
