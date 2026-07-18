@@ -1,93 +1,63 @@
 // utils/sendEmail.js
-import nodemailer from "nodemailer";
+
+import { Resend } from "resend";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-function createTransporter() {
-  const user = process.env.EMAIL_USER;
-  const pass = process.env.EMAIL_PASS;
+const apiKey = process.env.EMAIL_PASS;
 
-  console.log("========== SMTP DEBUG ==========");
-  console.log("EMAIL_USER:", user);
-  console.log("EMAIL_PASS exists:", !!pass);
-  console.log("EMAIL_PASS length:", pass ? pass.length : 0);
-  console.log("EMAIL_FROM:", process.env.EMAIL_FROM);
-  console.log("===============================");
-
-  if (!user || !pass) {
-    throw new Error("EMAIL_USER and EMAIL_PASS must be set in environment");
-  }
-
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  requireTLS: true,
-  family: 4,
-  auth: {
-    user,
-    pass,
-  },
-  logger: true,
-  debug: true,
-});
-  console.log("Starting transporter.verify()...");
-
-  transporter.verify((error, success) => {
-    if (error) {
-      console.error("========== VERIFY ERROR ==========");
-      console.error(error);
-      console.error("code:", error.code);
-      console.error("command:", error.command);
-      console.error("response:", error.response);
-      console.error("responseCode:", error.responseCode);
-      console.error("==================================");
-    } else {
-      console.log("✅ SMTP Verify Success");
-      console.log(success);
-    }
-  });
-
-  return transporter;
+if (!process.env.EMAIL_USER || !apiKey) {
+  throw new Error("EMAIL_USER and EMAIL_PASS must be set in environment");
 }
 
-const transporter = createTransporter();
+const resend = new Resend(apiKey);
 
+/**
+ * sendEmail
+ * @param {{ to: string, subject: string, text?: string, html?: string }} opts
+ * @returns {Promise<{ success: boolean, info?: any, error?: any }>}
+ */
 export async function sendEmail({ to, subject, text, html }) {
-  console.log("========== SEND EMAIL ==========");
-  console.log("To:", to);
-  console.log("Subject:", subject);
-  console.log("Has HTML:", !!html);
-  console.log("Has Text:", !!text);
-  console.log("===============================");
+  console.log(
+    `sendEmail to=${to} subject=${subject} html=${Boolean(html)} text=${Boolean(text)}`
+  );
 
   if (!to) {
-    throw new Error("Missing 'to' address");
+    return {
+      success: false,
+      error: new Error("Missing 'to' address"),
+    };
   }
 
+  if (!subject) subject = "Notification";
+
   try {
-    const info = await transporter.sendMail({
+    const { data, error } = await resend.emails.send({
       from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
       to,
-      subject: subject || "Notification",
-      text,
-      html,
+      subject,
+      text: text ?? undefined,
+      html: html ?? undefined,
     });
 
-    console.log("========== EMAIL SENT ==========");
-    console.log(info);
-    console.log("================================");
+    if (error) {
+      console.error("Resend error:", error);
+      return {
+        success: false,
+        error,
+      };
+    }
 
-    return info;
+    return {
+      success: true,
+      info: data,
+    };
   } catch (err) {
-    console.error("========== SEND ERROR ==========");
-    console.error(err);
-    console.error("code:", err.code);
-    console.error("command:", err.command);
-    console.error("response:", err.response);
-    console.error("responseCode:", err.responseCode);
-    console.error("================================");
-    throw err;
+    console.error("sendEmail error:", err);
+    return {
+      success: false,
+      error: err,
+    };
   }
 }
