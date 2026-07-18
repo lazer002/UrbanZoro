@@ -4,37 +4,41 @@ import dotenv from "dotenv";
 dotenv.config()
 
 function createTransporter() {
-  let user = process.env.EMAIL_USER;
-  let pass = process.env.EMAIL_PASS;
+  const user = process.env.EMAIL_USER;
+  const pass = process.env.EMAIL_PASS;
 
+  console.log(user,pass)
   if (!user || !pass) {
     throw new Error("EMAIL_USER and EMAIL_PASS must be set in environment");
   }
 
-  // If custom SMTP host is provided, use it; otherwise use provider service (Gmail)
-  if (process.env.SMTP_HOST) {
-    return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: String(process.env.SMTP_PORT) === "465",
-      auth: { user, pass },
-      pool: true,
-      maxConnections: 3,
-      maxMessages: 50,
-    });
-  }
-
-  // Default to Gmail-compatible transport (works when EMAIL_USER is a Gmail account and pass is an app password)
-  return nodemailer.createTransport({
-    service: "gmail",
-    auth: { user, pass },
-    pool: true,
-    maxConnections: 3,
-    maxMessages: 50,
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: {
+      user,
+      pass,
+    },
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
   });
+
+  transporter.verify((error) => {
+    if (error) {
+      console.error("❌ SMTP Verify Error:", error);
+    } else {
+      console.log("✅ SMTP Server is ready");
+    }
+  });
+
+  return transporter;
 }
 
 const transporter = createTransporter();
+
+
 
 /**
  * sendEmail
@@ -53,8 +57,8 @@ export async function sendEmail({ to, subject, text, html }) {
   try {
     const info = await transporter.sendMail(mail);
     return { success: true, info };
-  } catch (err) {
-    console.error("sendEmail error:", err?.message || err);
-    return { success: false, error: err };
-  }
+  }  catch (err) {
+  console.error("sendEmail error:", err);
+  throw err;
+}
 }
