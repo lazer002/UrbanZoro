@@ -19,21 +19,18 @@ function createTransporter() {
     throw new Error("EMAIL_USER and EMAIL_PASS must be set in environment");
   }
 
-  const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    auth: {
-      user,
-      pass,
-    },
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
-    logger: true,
-    debug: true,
-  });
-
+const transporter = nodemailer.createTransport({
+  host: "smtp.gmail.com",
+  port: 587,
+  secure: false,
+  requireTLS: true,
+  auth: {
+    user,
+    pass,
+  },
+  logger: true,
+  debug: true,
+});
   console.log("Starting transporter.verify()...");
 
   transporter.verify((error, success) => {
