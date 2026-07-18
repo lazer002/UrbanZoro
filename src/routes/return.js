@@ -5,7 +5,7 @@ import mongoose from "mongoose";
 import { Return } from "../models/Return.js";
 import { Order } from "../models/Order.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
-
+import { templateForStatus } from "../utils/emailTemplates.js";
 const router = express.Router();
 
 /* =========================================================
@@ -298,6 +298,23 @@ router.post("/", async (req, res) => {
         runValidators: true,
       }
     );
+
+try {
+  const { subject, text, html } = templateForStatus(newOrderStatus, {
+    order,
+    actor,
+  });
+
+  await sendEmail({
+    to: order.email,
+    subject,
+    text,
+    html,
+  });
+} catch (err) {
+  console.error("Return/Exchange/Repair email error:", err);
+}
+
 
     return res.status(201).json({
       success: true,
