@@ -20,13 +20,19 @@ function cartKey(req) {
 
 router.get('/',optionalAuth, async (req, res) => {
   const key = cartKey(req);
-console.log("Fetch cart items with key:", key);
 
   try {
     const items = await CartItem.find(key)
-      .populate('product', 'title price images')
+      .populate('product', 'title price images category categoryName')
       .populate('bundle', 'title price images')
-      .populate('bundleProducts.product', 'title price images');
+       .populate({
+        path: "bundleProducts.product",
+        select: "title price images category categoryName",
+        populate: {
+          path: "category",
+          select: "name",
+        },
+      });
 
     res.json({ items }); // ✅ wrap in object for frontend compatibility
   } catch (err) {
@@ -64,135 +70,270 @@ router.post('/add',optionalAuth, async (req, res) => {
   res.json({ message: 'Added to cart', item });
 });
 
-router.post('/addbundle', optionalAuth, async (req, res) => {
+router.post("/addbundle", optionalAuth, async (req, res) => {
   console.log("Add bundle to cart request body:", req.body);
+
   const key = cartKey(req);
-  const { bundleId,customBundle, bundleProducts, quantity = 1, mainImage } = req.body;
 
-  if (!key || (!bundleId && !customBundle) || !Array.isArray(bundleProducts) || bundleProducts.length === 0)
-    return res.status(400).json({ error: 'Missing fields' });
+  const {
+    bundleId,
+    customBundle,
+    bundleProducts,
+    quantity = 1,
+    mainImage,
+  } = req.body;
 
-  for (const p of bundleProducts) {
-    if (!p.productId || !mongoose.isValidObjectId(p.productId)) {
-      return res.status(400).json({ error: `Invalid productId: ${p.productId}` });
-    }
+  if (
+    !key ||
+    (!bundleId && !customBundle) ||
+    !Array.isArray(bundleProducts) ||
+    bundleProducts.length === 0
+  ) {
+    return res.status(400).json({
+      error: "Missing fields",
+    });
   }
 
-  const forCompare = bundleProducts.map(p => ({
-    product: String(p.productId),
-    size: p.size ?? "",
-    quantity: Number(p.quantity ?? 1),
-  }));
-
-  const forSave = bundleProducts.map(p => ({
-    product: new mongoose.Types.ObjectId(p.productId),
-    size: p.size ?? "",
-    quantity: Number(p.quantity ?? 1),
-  }));
-
-  const canonical = arr =>
-    arr
-      .map(x => `${x.product}:${x.size}:${x.quantity}`)
-      .sort()
-      .join("|");
-
-  const newSig = canonical(forCompare);
-
   try {
-const filter = { ...key };
+    for (const p of bundleProducts) {
+      if (
+        !p.productId ||
+        !mongoose.isValidObjectId(p.productId)
+      ) {
+        return res.status(400).json({
+          error: `Invalid productId: ${p.productId}`,
+        });
+      }
+    }
 
-if (bundleId) {
-  filter.bundle = new mongoose.Types.ObjectId(bundleId);
-}
+    const products = await Product.find({
+      _id: {
+        $in: bundleProducts.map(
+          (p) => p.productId
+        ),
+      },
+    }).select(
+      "_id title price images category categoryName"
+    );
 
-if (customBundle) {
-  filter["customBundle.title"] = customBundle.title;
-  filter["customBundle.price"] = customBundle.price;
-}
+    const productMap = new Map(
+      products.map((p) => [
+        p._id.toString(),
+        p,
+      ])
+    );
 
-const existingRows = await CartItem.find(filter).exec();
+    const forCompare = bundleProducts.map((p) => ({
+      product: String(p.productId),
+      size: p.size ?? "",
+      quantity: Number(p.quantity ?? 1),
+    }));
 
-    const matchingRow = existingRows.find((row) => {
-      const existingCompare = (row.bundleProducts || []).map(bp => ({
-        product: bp.product ? bp.product.toString() : String(bp.product),
-        size: bp.size ?? "",
-        quantity: Number(bp.quantity ?? 1),
-      }));
-      const existingSig = canonical(existingCompare);
-      return existingSig === newSig;
-    });
+    const forSave = bundleProducts.map((p) => ({
+      product: new mongoose.Types.ObjectId(
+        p.productId
+      ),
+      size: p.size ?? "",
+      quantity: Number(p.quantity ?? 1),
+    }));
+
+    const canonical = (arr) =>
+      arr
+        .map(
+          (x) =>
+            `${x.product}:${x.size}:${x.quantity}`
+        )
+        .sort()
+        .join("|");
+
+    const newSig = canonical(forCompare);
+
+    const filter = { ...key };
+
+    if (bundleId) {
+      filter.bundle =
+        new mongoose.Types.ObjectId(bundleId);
+    }
+
+    if (customBundle) {
+      filter["customBundle.title"] =
+        customBundle.title;
+
+      filter["customBundle.price"] =
+        customBundle.price;
+    }
+
+    const existingRows =
+      await CartItem.find(filter).exec();
+
+    const matchingRow = existingRows.find(
+      (row) => {
+        const existingCompare =
+          (row.bundleProducts || []).map(
+            (bp) => ({
+              product: bp.product
+                ? bp.product.toString()
+                : String(bp.product),
+              size: bp.size ?? "",
+              quantity: Number(
+                bp.quantity ?? 1
+              ),
+            })
+          );
+
+        return (
+          canonical(existingCompare) ===
+          newSig
+        );
+      }
+    );
 
     if (matchingRow) {
-      matchingRow.quantity = (matchingRow.quantity || 0) + Number(quantity || 1);
+      matchingRow.quantity =
+        (matchingRow.quantity || 0) +
+        Number(quantity || 1);
+
       await matchingRow.save();
+
       await matchingRow.populate([
-        { path: 'bundle', select: 'title price images' },
-        { path: 'bundleProducts.product', select: 'title price images' },
+        {
+          path: "bundle",
+          select: "title price images",
+        },
+        {
+          path: "bundleProducts.product",
+          select:
+            "title price images category categoryName",
+          populate: {
+            path: "category",
+            select: "name",
+          },
+        },
       ]);
-      return res.json({ message: 'Bundle quantity updated', item: matchingRow });
+
+      return res.json({
+        message: "Bundle quantity updated",
+        item: matchingRow,
+      });
     }
-    
-const createDoc = {
-  ...key,
-  mainImage: mainImage || null,
-  bundleProducts: forSave,
-  quantity: Number(quantity || 1),
-};
 
-if (bundleId) {
-  createDoc.bundle =
-    new mongoose.Types.ObjectId(bundleId);
-}
+    const createDoc = {
+      ...key,
 
-if (customBundle) {
-  createDoc.customBundle =
-    customBundle;
-}
+      mainImage: mainImage || null,
+
+      bundleProducts: forSave,
+
+      quantity: Number(quantity || 1),
+    };
+
+    if (bundleId) {
+      createDoc.bundle =
+        new mongoose.Types.ObjectId(bundleId);
+    }
+
+    if (customBundle) {
+      createDoc.customBundle =
+        customBundle;
+    }
+
     delete createDoc.product;
     delete createDoc.size;
 
     let newItem;
+
     try {
-      newItem = await CartItem.create(createDoc);
+      newItem =
+        await CartItem.create(createDoc);
     } catch (err) {
-      if (err && err.code === 11000) {
-const filter = { ...key };
+      if (err?.code === 11000) {
+        const raceFilter = { ...key };
 
-if (bundleId) {
-  filter.bundle = new mongoose.Types.ObjectId(bundleId);
-}
+        if (bundleId) {
+          raceFilter.bundle =
+            new mongoose.Types.ObjectId(
+              bundleId
+            );
+        }
 
-if (customBundle) {
-  filter["customBundle.title"] = customBundle.title;
-  filter["customBundle.price"] = customBundle.price;
+        if (customBundle) {
+          raceFilter[
+            "customBundle.title"
+          ] = customBundle.title;
 
-}
+          raceFilter[
+            "customBundle.price"
+          ] = customBundle.price;
+        }
 
-const doc = await CartItem.findOne(filter);
+        const doc =
+          await CartItem.findOne(raceFilter);
+
         if (doc) {
-          doc.quantity = (doc.quantity || 0) + Number(quantity || 1);
+          doc.quantity =
+            (doc.quantity || 0) +
+            Number(quantity || 1);
+
           await doc.save();
+
           await doc.populate([
-            { path: 'bundle', select: 'title price images' },
-            { path: 'bundleProducts.product', select: 'title price images' },
+            {
+              path: "bundle",
+              select: "title price images",
+            },
+            {
+              path: "bundleProducts.product",
+              select:
+                "title price images category categoryName",
+              populate: {
+                path: "category",
+                select: "name",
+              },
+            },
           ]);
-          return res.json({ message: 'Bundle quantity updated (after race)', item: doc });
+
+          return res.json({
+            message:
+              "Bundle quantity updated (after race)",
+            item: doc,
+          });
         }
       }
+
       throw err;
     }
 
-    const populatedItem = await CartItem.findById(newItem._id)
-      .populate('bundle', 'title price images')
-      .populate('bundleProducts.product', 'title price images');
+    const populatedItem =
+      await CartItem.findById(newItem._id)
+        .populate(
+          "bundle",
+          "title price images"
+        )
+        .populate({
+          path: "bundleProducts.product",
+          select:
+            "title price images category categoryName",
+          populate: {
+            path: "category",
+            select: "name",
+          },
+        });
 
-    return res.json({ message: 'Bundle added to cart', item: populatedItem });
+    return res.json({
+      message: "Bundle added to cart",
+      item: populatedItem,
+    });
   } catch (err) {
-    console.error('addbundle error:', err);
-    return res.status(500).json({ error: 'Failed to add bundle' });
+    console.error(
+      "addbundle error:",
+      err
+    );
+
+    return res.status(500).json({
+      error: "Failed to add bundle",
+    });
   }
 });
-
 
 
 
