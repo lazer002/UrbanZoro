@@ -2,6 +2,10 @@ import mongoose from "mongoose";
 
 const bundleProductSchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+    category: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Category",
+    },
   size: { type: String },
   quantity: { type: Number, default: 1 },
 }, { _id: false });
@@ -12,6 +16,11 @@ const cartItemSchema = new mongoose.Schema({
 
   // Single product
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+
+    category: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Category",
+    },
   size: { type: String },
 
   // Bundle
@@ -25,12 +34,14 @@ const cartItemSchema = new mongoose.Schema({
   bundleProducts: { type: [bundleProductSchema], default: undefined },
 
   quantity: { type: Number, default: 1, min: 1 },
+ 
 }, { timestamps: true });
 
 // Clean up fields automatically
 cartItemSchema.pre("validate", function(next) {
   if (this.bundle || this.customBundle) {
     this.product = undefined;
+     this.category = undefined;
     this.size = undefined;
   }
 

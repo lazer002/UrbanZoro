@@ -266,6 +266,7 @@ if (!userId) {
 
     const nextSeq = await getNextOrderSeq(new Date().getFullYear());
     const orderNumber = `DD-${new Date().getFullYear()}-${String(nextSeq).padStart(4, "0")}`;
+    const initialOrderStatus = paymentMethod === "cod" ? "confirmed" : "pending";
 
     const order = await Order.create({
       userId: userId || null,
@@ -283,7 +284,7 @@ if (!userId) {
       paymentMethod,
       source,
       paymentStatus: "pending",
-      orderStatus: "pending",
+      orderStatus: initialOrderStatus,
     });
 
     // =========================
@@ -350,8 +351,14 @@ if (!userId) {
     // 📩 COD Email
     // =========================
 
+const emailStatus =
+  paymentMethod === "cod"
+    ? "confirmed"
+    : "placed";
+
+
     try {
-      const { subject, text, html } = templateForStatus("placed", { order });
+      const { subject, text, html } = templateForStatus(emailStatus, { order });
       await sendEmail({ to: order.email, subject, text, html });
     } catch (err) {
       console.error("Email error:", err.message);
