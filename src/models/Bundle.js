@@ -28,8 +28,17 @@ const bundleSchema = new Schema(
       type: Schema.Types.ObjectId,
       ref: "Category",
     },
-
-    // ✅ Multiple main images for the bundle (user uploads them)
+    oldPrice:{
+      type: Number,
+    },
+ discount: {
+      type: Number,
+    },tags:
+    [
+      {
+        type: String,
+      },
+    ],
     mainImages: [
       {
         type: String, // store URLs
