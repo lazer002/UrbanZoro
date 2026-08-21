@@ -1,7 +1,3 @@
-// PART 1
-// Replace everything from:
-// const siteName ...
-// through wrapper() and orderSummary()
 
 const BRAND = {
   name: "GARRIB",
@@ -16,9 +12,6 @@ const BRAND = {
   muted: "#777777",
 };
 
-const trackingURL = order?.shipment?.trackingNumber
-  ? `${BRAND.url}/track/${order.shipment.trackingNumber}`
-  : null;
 
 const money = (v) => `₹${Number(v || 0).toLocaleString("en-IN")}`;
 
@@ -147,7 +140,7 @@ color:#999;
 </div>
 `;
 
-const priceCard = () => `
+const priceCard = (order) => `
 <div
 style="
 margin-top:28px;
@@ -227,82 +220,83 @@ ${money(order?.total)}
 </div>
 `;
 
-const orderSummary = `
-<div style="margin-top:36px;">
+const orderSummary = (order) => `
+  <div style="margin-top:36px;">
 
-<h3
-style="
-margin:0 0 20px;
-font-size:22px;
-font-weight:800;
-color:${BRAND.black};
-">
-Items in your order
-</h3>
+    <h3
+      style="
+        margin:0 0 20px;
+        font-size:22px;
+        font-weight:800;
+        color:${BRAND.black};
+      "
+    >
+      Items in your order
+    </h3>
 
-${(order?.items || [])
-    .map(
-      (item) => `
-<div
-style="
-display:flex;
-align-items:center;
-margin-bottom:18px;
-padding:18px;
-border:1px solid ${BRAND.border};
-border-radius:20px;
-">
+    ${(order?.items || [])
+      .map(
+        (item) => `
+          <div
+            style="
+              display:flex;
+              align-items:center;
+              margin-bottom:18px;
+              padding:18px;
+              border:1px solid ${BRAND.border};
+              border-radius:20px;
+            "
+          >
+            <img
+              src="${item.mainImage || ""}"
+              style="
+                width:82px;
+                height:82px;
+                border-radius:18px;
+                object-fit:cover;
+                margin-right:18px;
+              "
+            />
 
-<img
-src="${item.mainImage}"
-style="
-width:82px;
-height:82px;
-border-radius:18px;
-object-fit:cover;
-margin-right:18px;
-"
-/>
+            <div style="flex:1;">
+              <div
+                style="
+                  font-size:17px;
+                  font-weight:800;
+                  color:${BRAND.black};
+                  margin-bottom:8px;
+                "
+              >
+                ${item.title || ""}
+              </div>
 
-<div style="flex:1;">
+              <div
+                style="
+                  font-size:14px;
+                  color:${BRAND.muted};
+                "
+              >
+                Size ${item.variant || "-"} • Qty ${item.quantity || 0}
+              </div>
+            </div>
 
-<div
-style="
-font-size:17px;
-font-weight:800;
-color:${BRAND.black};
-margin-bottom:8px;
-">
-${item.title}
-</div>
+            <div
+              style="
+                font-size:18px;
+                font-weight:800;
+                color:${BRAND.black};
+              "
+            >
+              ${money(item.price)}
+            </div>
+          </div>
+        `
+      )
+      .join("")}
 
-<div
-style="
-font-size:14px;
-color:${BRAND.muted};
-">
-Size ${item.variant || "-"} • Qty ${item.quantity}
-</div>
+    ${priceCard(order)}
 
-</div>
-
-<div
-style="
-font-size:18px;
-font-weight:800;
-color:${BRAND.black};
-">
-${money(item.price)}
-</div>
-
-</div>
-`
-    )
-    .join("")}
-
-${priceCard()}
-
-</div>
+  </div>
 `;
 
 const wrapper = (status, body) => `
@@ -469,13 +463,13 @@ ${order.orderNumber}
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order ${order.orderNumber} has been placed successfully.`,
-      html: wrapper("ORDER PLACED", body),
+      html: wrapper("ORDER PLACED", body,order),
     };
   },
 
@@ -549,13 +543,13 @@ color:${BRAND.muted};
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order is awaiting payment verification.`,
-      html: wrapper("PAYMENT PENDING", body),
+      html: wrapper("PAYMENT PENDING", body,order),
     };
   },
 
@@ -628,18 +622,24 @@ You'll receive another email as soon as your package leaves our warehouse.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order has been confirmed.`,
-      html: wrapper("CONFIRMED", body),
+      html: wrapper("CONFIRMED", body, order),
     };
   },
 
 
   dispatched: ({ order }) => {
+
+const trackingURL = order?.shipment?.trackingNumber
+  ? `${BRAND.url}/track/${order.shipment.trackingNumber}`
+  : null;
+
+
     const subject = `Order ${order.orderNumber} Dispatched`;
 
     const body = `
@@ -726,18 +726,21 @@ TRACK PACKAGE
         : ""
       }
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order has been dispatched.`,
-      html: wrapper("DISPATCHED", body),
+      html: wrapper("DISPATCHED", body, order),
     };
   },
 
   shipped: ({ order }) => {
     const subject = `Order ${order.orderNumber} Shipped`;
+const trackingURL = order?.shipment?.trackingNumber
+  ? `${BRAND.url}/track/${order.shipment.trackingNumber}`
+  : null;
 
     const body = `
 <p
@@ -803,13 +806,13 @@ VIEW LIVE TRACKING
         : ""
       }
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order has shipped.`,
-      html: wrapper("SHIPPED", body),
+      html: wrapper("SHIPPED", body, order),
     };
   },
 
@@ -881,13 +884,13 @@ Thank you for shopping with GARRIB.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order is out for delivery.`,
-      html: wrapper("OUT FOR DELIVERY", body),
+      html: wrapper("OUT FOR DELIVERY", body, order),
     };
   },
 
@@ -970,13 +973,13 @@ If something isn't right, simply reply to this email and we'll help immediately.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order has been delivered.`,
-      html: wrapper("DELIVERED", body),
+      html: wrapper("DELIVERED", body, order),
     };
   },
 
@@ -1054,13 +1057,13 @@ contact our support team and we'll be happy to assist.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your order has been cancelled.`,
-      html: wrapper("CANCELLED", body),
+      html: wrapper("CANCELLED", body, order),
     };
   },
 
@@ -1135,20 +1138,20 @@ ${money(order.total)}
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Refund processed for order ${order.orderNumber}.`,
-      html: wrapper("REFUNDED", body),
+      html: wrapper("REFUNDED", body, order),
     };
   },
 
-  "return requested": ({ order }) => {
-    const subject = `Return Request Received • ${order.orderNumber}`;
+ "return requested": ({ order }) => {
+  const subject = `Return Request Received • ${order.orderNumber}`;
 
-    const body = `
+  const body = `
 <p
 style="
 margin:0;
@@ -1215,15 +1218,19 @@ We'll email you as soon as the request has been reviewed.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
-    return {
-      subject,
-      text: `Your return request has been received.`,
-      html: wrapper("RETURN REQUESTED", body),
-    };
-  },
+  return {
+    subject,
+    text: `Your return request has been received.`,
+    html: wrapper(
+      "RETURN REQUESTED",
+      body,
+      order
+    ),
+  };
+},
 
   "return approved": ({ order }) => {
     const subject = `Return Approved • ${order.orderNumber}`;
@@ -1301,13 +1308,13 @@ color:${BRAND.muted};
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your return request has been approved.`,
-      html: wrapper("RETURN APPROVED", body),
+      html: wrapper("RETURN APPROVED", body, order),
     };
   },
 
@@ -1382,13 +1389,13 @@ Our support team will gladly review your case again if needed.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your return request has been rejected.`,
-      html: wrapper("RETURN REJECTED", body),
+      html: wrapper("RETURN REJECTED", body, order),
     };
   },
 
@@ -1458,13 +1465,13 @@ Once inspection is completed, your refund will be initiated automatically.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `We've received your returned package.`,
-      html: wrapper("RETURNED", body),
+      html: wrapper("RETURNED", body, order),
     };
   },
 
@@ -1536,13 +1543,13 @@ We'll notify you once your request has been approved or if additional informatio
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your exchange request has been received.`,
-      html: wrapper("EXCHANGE REQUESTED", body),
+      html: wrapper("EXCHANGE REQUESTED", body, order),
     };
   },
 
@@ -1624,13 +1631,13 @@ color:${BRAND.muted};
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your exchange request has been approved.`,
-      html: wrapper("EXCHANGE APPROVED", body),
+      html: wrapper("EXCHANGE APPROVED", body, order),
     };
   },
 
@@ -1701,13 +1708,13 @@ If you believe this decision is incorrect, our support team will be happy to rev
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your exchange request has been rejected.`,
-      html: wrapper("EXCHANGE REJECTED", body),
+      html: wrapper("EXCHANGE REJECTED", body, order),
     };
   },
 
@@ -1777,13 +1784,13 @@ Our warehouse team is carefully packing your replacement order.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your exchange is currently being processed.`,
-      html: wrapper("EXCHANGE PROCESSING", body),
+      html: wrapper("EXCHANGE PROCESSING", body, order),
     };
   },
 
@@ -1862,13 +1869,13 @@ We hope your replacement is exactly what you were looking for.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your exchange has been completed.`,
-      html: wrapper("EXCHANGED", body),
+      html: wrapper("EXCHANGED", body, order),
     };
   },
 
@@ -1940,13 +1947,13 @@ We'll notify you once your repair request has been reviewed.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your repair request has been received.`,
-      html: wrapper("REPAIR REQUESTED", body),
+      html: wrapper("REPAIR REQUESTED", body, order),
     };
   },
 
@@ -2026,13 +2033,13 @@ color:${BRAND.muted};
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your repair request has been approved.`,
-      html: wrapper("REPAIR APPROVED", body),
+      html: wrapper("REPAIR APPROVED", body, order),
     };
   },
 
@@ -2103,13 +2110,13 @@ Our support team will gladly review your request again if needed.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your repair request has been rejected.`,
-      html: wrapper("REPAIR REJECTED", body),
+      html: wrapper("REPAIR REJECTED", body, order),
     };
   },
 
@@ -2179,13 +2186,13 @@ Our specialists are carefully restoring your product to its best condition.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your repair is currently in progress.`,
-      html: wrapper("REPAIR PROCESSING", body),
+      html: wrapper("REPAIR PROCESSING", body, order),
     };
   },
 
@@ -2264,19 +2271,22 @@ Thank you for trusting GARRIB Care. We appreciate your patience.
 
 </div>
 
-${orderSummary}
+${orderSummary(order)}
 `;
 
     return {
       subject,
       text: `Your repair has been completed.`,
-      html: wrapper("REPAIRED", body),
+      html: wrapper("REPAIRED", body, order),
     };
   },
 
 };
 
-const fn = templates[s] || templates.pending;
-return fn({ order, actor, reason });
+export const getEmailTemplate = ({ status, order, actor, reason }) => {
+  const s = String(status || "").toLowerCase();
 
+  const fn = templates[s] || templates.pending;
 
+  return fn({ order, actor, reason });
+}

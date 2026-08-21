@@ -6,7 +6,7 @@ import { Payment } from "../models/Payment.js";
 import axios from "axios"; // fixed import
 import { getNextOrderSeq } from "../models/Counter.js";
 import { sendEmail } from "../utils/sendEmail.js";
-import { templateForStatus } from "../utils/emailTemplates.js";
+import { getEmailTemplate } from "../utils/emailTemplates.js";
 import { requireAuth ,optionalAuth} from "../middleware/auth.js";
 import {Product} from "../models/Product.js";
 import { Bundle } from "../models/Bundle.js";
@@ -358,7 +358,7 @@ const emailStatus =
 
 
     try {
-      const { subject, text, html } = templateForStatus(emailStatus, { order });
+      const { subject, text, html } = getEmailTemplate(emailStatus, { order });
       await sendEmail({ to: order.email, subject, text, html });
     } catch (err) {
       console.error("Email error:", err.message);
@@ -608,7 +608,7 @@ if (paymentData.status !== "captured") {
     // 📩 8. SEND EMAIL
     // =========================
     try {
-      const { subject, text, html } = templateForStatus("paid", { order });
+      const { subject, text, html } = getEmailTemplate("paid", { order });
       await sendEmail({ to: order.email, subject, text, html });
     } catch (err) {
       console.error("Email error:", err.message);
@@ -752,7 +752,7 @@ router.get("/mine", optionalAuth, async (req, res) => {
     } else {
       return res.status(400).json({ error: "No identity" });
     }
-
+console.log(orders.length)
     res.json({
       orders: orders.sort((a, b) => b.createdAt - a.createdAt),
     });

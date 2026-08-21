@@ -4,8 +4,8 @@ import express from "express";
 import mongoose from "mongoose";
 import { Return } from "../models/Return.js";
 import { Order } from "../models/Order.js";
-import { requireAuth, requireAdmin } from "../middleware/auth.js";
-import { templateForStatus } from "../utils/emailTemplates.js";
+import { requireAuth, requireAdmin, optionalAuth } from "../middleware/auth.js";
+import { getEmailTemplate } from "../utils/emailTemplates.js";
 const router = express.Router();
 
 /* =========================================================
@@ -300,13 +300,15 @@ router.post("/", async (req, res) => {
     );
 
 try {
-  const { subject, text, html } = templateForStatus(newOrderStatus, {
-    order,
-    actor,
-  });
+  const { subject, text, html } =
+    getEmailTemplate({
+      status: newOrderStatus,
+      order,
+      actor,
+    });
 
   await sendEmail({
-    to: order.email,
+    to: order.email || guestEmail,
     subject,
     text,
     html,
@@ -479,6 +481,90 @@ router.get(
           message:
             "Server error",
         });
+    }
+  }
+);
+
+
+router.get(
+  "/mine",optionalAuth,
+  async (req, res) => {
+    try {
+      console.log("fwafawfwa")
+      const userId = req.user?.id;
+      const guestId =
+        req.headers["x-guest-id"];
+
+      let query;
+
+      if (userId) {
+        query = {
+          userId: String(userId),
+        };
+      } else if (guestId) {
+        query = {
+          guestId: String(guestId),
+        };
+      } else {
+        return res.status(401).json({
+          success: false,
+          message:
+            "User or guest identity required",
+        });
+      }
+
+      const requests =
+        await Return.find(query)
+          .sort({
+            createdAt: -1,
+          })
+          .limit(50)
+          .lean();
+
+      const orderIds = requests
+        .map((item) => item.orderId)
+        .filter(Boolean);
+
+      const orders =
+        await Order.find({
+          _id: {
+            $in: orderIds,
+          },
+        }).lean();
+
+      const orderMap = new Map(
+        orders.map((order) => [
+          String(order._id),
+          order,
+        ])
+      );
+
+      const result = requests.map(
+        (request) => ({
+          ...request,
+
+          order:
+            orderMap.get(
+              String(request.orderId)
+            ) || null,
+        })
+      );
+console.log("rrrr",result)
+      return res.json({
+        success: true,
+        count: result.length,
+        requests: result,
+      });
+    } catch (error) {
+      console.error(
+        "GET /returns/my-requests error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message: "Server error",
+      });
     }
   }
 );
@@ -657,5 +743,8 @@ router.patch(
     }
   }
 );
+
+
+
 
 export default router;

@@ -1,7 +1,7 @@
 // utils/updateOrderStatus.js
 import {Order} from "../models/Order.js"; // adjust path to your model
 import { isValidObjectId } from "mongoose";
-import { templateForStatus } from "./emailTemplates.js";
+import { getEmailTemplate } from "./emailTemplates.js";
 import { sendEmail } from "./sendEmail.js";
 import { createNotification } from "./createNotification.js";
 export const VALID_STATUSES = [
@@ -113,7 +113,7 @@ console.log("FINAL CHECK:", {
 let emailResult = null;
 
 try {
-  const tmpl = templateForStatus(normalized, { order: updated, actor, reason });
+  const tmpl = getEmailTemplate(normalized, { order: updated, actor, reason });
   const sendPromise = sendEmail({
     to: updated.email,
     subject: tmpl.subject,
@@ -143,7 +143,7 @@ console.log("Email send initiated:", { to: updated.email, subject: tmpl.subject 
 try {
   console.log(updated)
   console.log("Creating notification for status change:", { orderId, newStatus: normalized, statusUnchanged, userId: updated.userId, guestId: updated.guestId });
-  const tmpl = templateForStatus(normalized, { order: updated });
+  const tmpl = getEmailTemplate(normalized, { order: updated });
   if (!statusUnchanged) {
     await createNotification({
       type: "order",
