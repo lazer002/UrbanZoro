@@ -24,6 +24,7 @@ import address from './routes/address.js'
 import newsletter from './routes/newsletter.js'
 import contect from './routes/contect.js'
 import productRequestRouter from './routes/product-request.js'
+import inventoryRouter from "./routes/inventory.js";
 
 
 dotenv.config()
@@ -102,7 +103,7 @@ app.use('/api/address', address)
 app.use('/api/newsletter',limiter, newsletter)
 app.use('/api/contact', limiter, contect)
 app.use('/api/product-request', productRequestRouter)
-
+app.use("/api/inventory", inventoryRouter);
 
 /* -------------------------------------------------------------------------- */
 /*                           SERVER START + LOCAL IP                           */

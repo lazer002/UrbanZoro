@@ -2,6 +2,7 @@ import express from 'express'
 import { Product } from '../models/Product.js'
 import { requireAuth, requireAdmin } from '../middleware/auth.js'
 import { Category } from '../models/Category.js';
+import { Inventory } from "../models/Inventory.js";
 
 const router = express.Router()
 
@@ -32,7 +33,7 @@ router.get("/by-ids", async (req, res) => {
 
 
 router.get("/", async (req, res) => {
-
+console.log(req)
   try {
 
 
@@ -422,34 +423,162 @@ router.get("/search", async (req, res) => {
 });
 
 
-// Admin CRUD
-router.post('/', requireAuth, requireAdmin, async (req, res) => {
-  console.log(req.body)
-  const product = await Product.create(req.body)
-  res.status(201).json(product)
-})
+// Create Product + Inventory
+router.post(
+  "/",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const product = await Product.create(req.body);
 
-router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
-  console.log(req.body)
-  const product = await Product.findByIdAndUpdate(req.params.id, req.body, { new: true })
-  if (!product) return res.status(404).json({ error: 'Not found' })
-  res.json(product)
-})
+      const inventory = await Inventory.create({
+        product: product._id,
+        sku: product.sku,
+        stock: {
+          XS: 0,
+          S: 0,
+          M: 0,
+          L: 0,
+          XL: 0,
+          XXL: 0,
+        },
+        reserved: 0,
+        lowStockThreshold: 5,
+        trackInventory: true,
+        allowBackorder: false,
+        active: true,
+      });
 
-router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
-  const product = await Product.findByIdAndDelete(req.params.id)
-  if (!product) return res.status(404).json({ error: 'Not found' })
-  res.json({ ok: true })
-})
+      res.status(201).json({
+        success: true,
+        product,
+        inventory,
+      });
+    } catch (error) {
+      console.error("CREATE PRODUCT ERROR:", error);
 
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
 
-router.get('/:id([0-9a-fA-F]{24})', async (req, res) => {
-  console.log(req.body)
-  const product = await Product.findById(req.params.id)
-  if (!product || !product.published) return res.status(404).json({ error: 'Not found' })
-  res.json(product)
-})
+// Update Product
+router.put(
+  "/:productId",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const product = await Product.findByIdAndUpdate(
+        req.params.productId,
+        req.body,
+        {
+          new: true,
+          runValidators: true,
+        }
+      );
 
+      if (!product) {
+        return res.status(404).json({
+          error: "Not found",
+        });
+      }
+
+      if (req.body.sku) {
+        await Inventory.findOneAndUpdate(
+          { product: product._id },
+          { sku: product.sku },
+          { new: true }
+        );
+      }
+
+      res.json({
+        success: true,
+        product,
+      });
+    } catch (error) {
+      console.error("UPDATE PRODUCT ERROR:", error);
+
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+// Delete Product + Inventory
+router.delete(
+  "/:productId",
+  requireAuth,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const product = await Product.findById(req.params.productId);
+
+      if (!product) {
+        return res.status(404).json({
+          error: "Not found",
+        });
+      }
+
+      await Inventory.findOneAndDelete({
+        product: product._id,
+      });
+
+      await product.deleteOne();
+
+      res.json({
+        success: true,
+        ok: true,
+      });
+    } catch (error) {
+      console.error("DELETE PRODUCT ERROR:", error);
+
+      res.status(500).json({
+        success: false,
+        error: error.message,
+      });
+    }
+  }
+);
+
+// Public Get Product
+router.get("/:publicId", async (req, res) => {
+  try {
+    const product = await Product.findOne({
+      publicId: req.params.publicId,
+      published: true,
+      active: true,
+    }).lean();
+
+    if (!product) {
+      return res.status(404).json({
+        error: "Not found",
+      });
+    }
+
+    const inventory = await Inventory.findOne({
+      product: product._id,
+      active: true,
+    }).lean();
+
+    res.json({
+      ...product,
+      inventory: inventory?.stock || {},
+    });
+  } catch (error) {
+    console.error("GET PRODUCT ERROR:", error);
+
+    res.status(500).json({
+      error: "Failed to fetch product",
+    });
+  }
+});
 
 export default router
 

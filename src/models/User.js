@@ -84,7 +84,11 @@ const userSchema = new mongoose.Schema(
       newsletter: { type: Boolean, default: true },
       notifications: { type: Boolean, default: true },
     },
-
+   tags: {
+      type: [String],
+      default: [],
+      index: true,
+    },
     status: {
       type: String,
       enum: ["active", "suspended", "deleted"],

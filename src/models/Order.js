@@ -15,7 +15,11 @@ const OrderSchema = new mongoose.Schema(
 
     shippingMethod: { type: String, default: "free" },
     billingSame: { type: Boolean, default: true },
-
+   tags: {
+      type: [String],
+      default: [],
+      index: true,
+    },
     items: {
       type: [
         {

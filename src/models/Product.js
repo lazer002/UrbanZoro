@@ -1,70 +1,204 @@
-// Product model
-
 import mongoose from "mongoose";
+import crypto from "crypto";
+
+const SIZE_NAMES = ["XS", "S", "M", "L", "XL", "XXL"];
 
 const productSchema = new mongoose.Schema(
   {
-    title: { type: String, required: true, index: "text" },
-    description: { type: String, default: "" },
-    price: { type: Number, required: true, min: 0 },
-    images: [{ type: String }],
-
-    sku: { type: String, unique: true, required: true },
-
-    // Track inventory per size
-    inventory: {
-      XS: { type: Number, default: 0 },
-      S: { type: Number, default: 0 },
-      M: { type: Number, default: 0 },
-      L: { type: Number, default: 0 },
-      XL: { type: Number, default: 0 },
-      XXL: { type: Number, default: 0 },
+    publicId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      immutable: true,
+      default: () => crypto.randomUUID(),
     },
 
-    published: { type: Boolean, default: true },
-    onSale: { type: Boolean, default: false },
-    isNewProduct: { type: Boolean, default: false },
-
-    category: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Category",
+    title: {
+      type: String,
       required: true,
+      trim: true,
+      maxlength: 200,
       index: true,
     },
-categoryName: {
-  type: String,
-  trim: true,
-  index: true,
-}, // denormalized for search
-    sizes: {
+
+    slug: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
+
+    description: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    price: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+
+    oldPrice: {
+      type: Number,
+      min: 0,
+    },
+
+    discount: {
+      type: Number,
+      min: 0,
+      max: 100,
+      default: 0,
+    },
+
+    currency: {
+      type: String,
+      default: "INR",
+      uppercase: true,
+      trim: true,
+    },
+
+    images: {
       type: [String],
-      enum: ["XS", "S", "M", "L", "XL", "XXL"],
       default: [],
     },
+
+    sku: {
+      type: String,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      trim: true,
+      index: true,
+    },
+
+    sizes: [
+      {
+        name: {
+          type: String,
+          enum: SIZE_NAMES,
+          required: true,
+        },
+        active: {
+          type: Boolean,
+          default: true,
+        },
+      },
+    ],
+
+    category: {
+      type: String,
+      required: true,
+      lowercase: true,
+      trim: true,
+      index: true,
+    },
+
+    tags: {
+      type: [String],
+      default: [],
+      index: true,
+    },
+
+    active: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+
+    published: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+
+    onSale: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    isNewProduct: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    featured: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    seo: {
+      title: {
+        type: String,
+        trim: true,
+      },
+      description: {
+        type: String,
+        trim: true,
+      },
+    },
+
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    versionKey: false,
+  }
 );
 
 productSchema.index({
   title: "text",
   description: "text",
   category: "text",
+  tags: "text",
   sku: "text",
 });
 
-// Auto-generate SKU if not provided
 productSchema.pre("validate", async function (next) {
-  if (!this.sku) {
-    let newSku;
-    let exists = true;
-
-    while (exists) {
-      newSku = Math.floor(10000000 + Math.random() * 9000000000).toString();
-      exists = await mongoose.models.Product.findOne({ sku: newSku });
-    }
-
-    this.sku = newSku;
+  if (!this.publicId) {
+    this.publicId = crypto.randomUUID();
   }
+
+  if (!this.sku) {
+    const count = await mongoose.models.Product.countDocuments();
+    this.sku = `GAR-${String(count + 1).padStart(6, "0")}`;
+  }
+
+  if (!this.slug && this.title) {
+    this.slug = this.title
+      .toLowerCase()
+      .trim()
+      .replace(/&/g, "-and-")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  }
+
+  if (
+    this.oldPrice &&
+    this.oldPrice > this.price &&
+    this.price >= 0
+  ) {
+    this.discount = Math.round(
+      ((this.oldPrice - this.price) / this.oldPrice) * 100
+    );
+  } else {
+    this.discount = 0;
+  }
+
+  if (this.category) {
+    this.category = this.category.toLowerCase().trim();
+  }
+
   next();
 });
 
