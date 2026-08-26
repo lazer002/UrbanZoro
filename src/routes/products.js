@@ -33,7 +33,7 @@ router.get("/by-ids", async (req, res) => {
 
 
 router.get("/", async (req, res) => {
-console.log(req)
+console.log("ssss",req.body)
   try {
 
 
@@ -327,55 +327,44 @@ console.log(req)
     ========================
     */
 
-    const total =
-      await Product.countDocuments(
-        filter
-      );
+    const total = await Product.countDocuments(filter);
 
-    /*
-    ========================
-    PRODUCTS
-    ========================
-    */
+const products = await Product.find(filter)
+  .sort(sortOption)
+  .skip((Number(page) - 1) * Number(limit))
+  .limit(Number(limit))
+  .lean();
 
-    const products =
-      await Product.find(filter)
+const productIds = products.map((product) => product._id);
 
-        .populate(
-          "category",
-          "name slug"
-        )
+const inventories = await Inventory.find({
+  product: { $in: productIds },
+  active: true,
+})
+  .select("product stock")
+  .lean();
 
-        .sort(sortOption)
+const inventoryMap = new Map(
+  inventories.map((inventory) => [
+    String(inventory.product),
+    inventory.stock,
+  ])
+);
 
-        .skip(
-          (Number(page) - 1) *
-          Number(limit)
-        )
+const items = products.map((product) => ({
+  ...product,
+  inventory: inventoryMap.get(String(product._id)) || {},
+}));
 
-        .limit(Number(limit));
-
-    /*
-    ========================
-    RESPONSE
-    ========================
-    */
-
-    return res.json({
-
-      items: products,
-
-      total,
-
-      currentPage:
-        Number(page),
-
-      totalPages: Math.ceil(
-        total / Number(limit)
-      ),
-
-    });
-
+return res.json({
+  items,
+  total,
+  currentPage: Number(page),
+  totalPages: Math.ceil(
+    total / Number(limit)
+  ),
+});
+  
   } catch (error) {
 
     console.error(error);
@@ -430,7 +419,10 @@ router.post(
   requireAdmin,
   async (req, res) => {
     try {
-      const product = await Product.create(req.body);
+      const product = await Product.create({
+  ...req.body,
+  isOutOfStock: true,
+});
 
       const inventory = await Inventory.create({
         product: product._id,

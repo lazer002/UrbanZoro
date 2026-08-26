@@ -144,6 +144,11 @@ const productSchema = new mongoose.Schema(
         trim: true,
       },
     },
+    isOutOfStock: {
+  type: Boolean,
+  default: true,
+  index: true,
+},
 
     metadata: {
       type: mongoose.Schema.Types.Mixed,

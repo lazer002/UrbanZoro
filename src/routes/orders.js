@@ -10,9 +10,14 @@ import { getEmailTemplate } from "../utils/emailTemplates.js";
 import { requireAuth ,optionalAuth} from "../middleware/auth.js";
 import {Product} from "../models/Product.js";
 import { Bundle } from "../models/Bundle.js";
-import mongoose from "mongoose";
+import {
+  updateOrderInventory,
+} from "../utils/inventoryUpdate.js";
+import { Inventory } from "../models/Inventory.js";
 import crypto from "crypto";
 const router = express.Router();
+
+
 
 
 router.post("/create", optionalAuth, async (req, res) => {
@@ -47,178 +52,266 @@ router.post("/create", optionalAuth, async (req, res) => {
 
     let calculatedSubtotal = 0;
     const validatedItems = [];
-    for (const item of items) {
-      let data = null;
-      let isBundle = false;
+for (const item of items) {
+  // =========================
+  // 📦 NORMAL BUNDLE
+  // =========================
 
+  if (item.bundleId) {
+    const bundle = await Bundle.findById(item.bundleId);
 
-if (item.bundleId) {
-  const bundle = await Bundle.findById(item.bundleId);
-
-  if (!bundle) {
-    return res.status(400).json({ error: "Invalid bundle" });
-  }
-
-  const itemTotal = bundle.price * item.quantity;
-  calculatedSubtotal += itemTotal;
-
-  // ✅ validate bundle products
-  const bundleProductsValidated = [];
-
-  for (const bp of item.bundleProducts || []) {
-    const product = await Product.findById(bp.productId);
-
-    if (!product) {
-      return res.status(400).json({ error: "Invalid bundle product" });
-    }
-
-    bundleProductsValidated.push({
-      productId: product._id,
-      title: product.title,
-      variant: bp.variant || "",
-      quantity: bp.quantity || 1,
-      mainImage: product.images?.[0] || "",
-    });
-  }
-
-  // ✅ NOW push (correct place)
-  validatedItems.push({
-    bundleId: bundle._id,
-    customBundle: false,
-    title: bundle.title,
-    quantity: item.quantity,
-    price: bundle.price,
-    total: itemTotal,
-    mainImage: item.mainImage || "default.jpg",
-
-    bundleProducts: bundleProductsValidated, // 🔥 THIS WAS MISSING
-  });
-
-  continue;
-}
-
-// =========================
-// 🎁 HANDLE CUSTOM BUNDLE
-// =========================
-if (item.customBundle) {
-  let originalBundlePrice = 0;
-  const bundleProductsValidated = [];
-
-  // ============================================
-  // VALIDATE ALL CUSTOM BUNDLE PRODUCTS
-  // ============================================
-
-  for (const bp of item.bundleProducts || []) {
-    const product = await Product.findById(bp.productId);
-
-    if (!product) {
+    if (!bundle) {
       return res.status(400).json({
-        success: false,
-        error: "Invalid bundle product",
+        error: "Invalid bundle",
       });
     }
 
-    const qty = Number(bp.quantity) || 1;
+    const bundleQuantity =
+      Number(item.quantity) || 1;
 
-    // Calculate original price from database
-    originalBundlePrice += product.price * qty;
+    const itemTotal =
+      bundle.price * bundleQuantity;
 
-    bundleProductsValidated.push({
-      productId: product._id,
-      title: product.title,
-      variant: bp.variant || "",
-      quantity: qty,
-      price: product.price,
-      mainImage: product.images?.[0] || "",
+    calculatedSubtotal += itemTotal;
+
+    const bundleProductsValidated = [];
+
+    for (const bp of item.bundleProducts || []) {
+      const product = await Product.findById(bp.productId);
+
+      if (!product) {
+        return res.status(400).json({
+          error: "Invalid bundle product",
+        });
+      }
+
+      const variant = bp.variant || "";
+      const quantity = Number(bp.quantity) || 1;
+      const requiredStock = quantity * bundleQuantity;
+
+      if (!variant) {
+        return res.status(400).json({
+          error: `${product.title}: size is required`,
+        });
+      }
+
+      const inventory = await Inventory.findOne({
+        product: product._id,
+        active: true,
+      });
+
+      if (!inventory) {
+        return res.status(400).json({
+          error: `Inventory not found for ${product.title}`,
+        });
+      }
+
+      const availableStock = Number(
+        inventory.stock?.[variant] || 0
+      );
+
+      if (
+        inventory.trackInventory &&
+        availableStock < requiredStock
+      ) {
+        return res.status(400).json({
+          error: `${product.title} (${variant}) has only ${availableStock} left`,
+        });
+      }
+
+      bundleProductsValidated.push({
+        productId: product._id,
+        title: product.title,
+        variant,
+        quantity,
+        price: product.price,
+        mainImage: product.images?.[0] || "",
+      });
+    }
+
+    validatedItems.push({
+      bundleId: bundle._id,
+      customBundle: false,
+      title: bundle.title,
+      quantity: bundleQuantity,
+      price: bundle.price,
+      total: itemTotal,
+      mainImage: item.mainImage || "default.jpg",
+      bundleProducts: bundleProductsValidated,
     });
+
+    continue;
   }
 
-  // ============================================
-  // APPLY 10% CUSTOM BUNDLE DISCOUNT
-  // ============================================
+  // =========================
+  // 🎁 CUSTOM BUNDLE
+  // =========================
 
-  const discountPercentage = 10;
+  if (item.customBundle) {
+    let originalBundlePrice = 0;
 
-  const discountAmount =
-    originalBundlePrice *
-    (discountPercentage / 100);
+    const bundleQuantity =
+      Number(item.quantity) || 1;
 
-  // Final custom bundle selling price
-  const customBundlePrice = Math.round(
-    originalBundlePrice - discountAmount
-  );
+    const bundleProductsValidated = [];
 
-  // Quantity of complete custom bundles
-  const bundleQuantity =
-    Number(item.quantity) || 1;
+    for (const bp of item.bundleProducts || []) {
+      const product = await Product.findById(bp.productId);
 
-  const itemTotal =
-    customBundlePrice * bundleQuantity;
+      if (!product) {
+        return res.status(400).json({
+          success: false,
+          error: "Invalid bundle product",
+        });
+      }
 
-  // Add discounted amount to order subtotal
-  calculatedSubtotal += itemTotal;
+      const quantity =
+        Number(bp.quantity) || 1;
 
-  // ============================================
-  // SAVE VALIDATED CUSTOM BUNDLE
-  // ============================================
+      const variant =
+        bp.variant || "";
 
-  validatedItems.push({
-    customBundle: true,
+      if (!variant) {
+        return res.status(400).json({
+          success: false,
+          error: `${product.title}: size is required`,
+        });
+      }
 
-    title:
-      item.title || "Custom Bundle",
+      const inventory = await Inventory.findOne({
+        product: product._id,
+        active: true,
+      });
 
-    quantity:
-      bundleQuantity,
+      if (!inventory) {
+        return res.status(400).json({
+          success: false,
+          error: `Inventory not found for ${product.title}`,
+        });
+      }
 
-    // Discounted selling price
-    price:
-      customBundlePrice,
+      const requiredStock =
+        quantity * bundleQuantity;
 
-    // Original total product price
-    originalPrice:
-      originalBundlePrice,
+      const availableStock = Number(
+        inventory.stock?.[variant] || 0
+      );
 
-    discountPercentage,
+      if (
+        inventory.trackInventory &&
+        availableStock < requiredStock
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: `${product.title} (${variant}) has only ${availableStock} left`,
+        });
+      }
 
-    discountAmount:
-      Math.round(discountAmount),
+      originalBundlePrice +=
+        product.price * quantity;
 
-    total:
-      itemTotal,
- 
-    mainImage:
-      item.mainImage || "",
+      bundleProductsValidated.push({
+        productId: product._id,
+        title: product.title,
+        variant,
+        quantity,
+        price: product.price,
+        mainImage: product.images?.[0] || "",
+      });
+    }
 
-    bundleProducts:
-      bundleProductsValidated,
-  });
+    const discountPercentage = 10;
 
-  continue;
-}
+    const discountAmount =
+      originalBundlePrice *
+      (discountPercentage / 100);
 
+    const customBundlePrice = Math.round(
+      originalBundlePrice - discountAmount
+    );
 
+    const itemTotal =
+      customBundlePrice * bundleQuantity;
+
+    calculatedSubtotal += itemTotal;
+
+    validatedItems.push({
+      customBundle: true,
+      title: item.title || "Custom Bundle",
+      quantity: bundleQuantity,
+      price: customBundlePrice,
+      originalPrice: originalBundlePrice,
+      discountPercentage,
+      discountAmount: Math.round(discountAmount),
+      total: itemTotal,
+      mainImage: item.mainImage || "",
+      bundleProducts: bundleProductsValidated,
+    });
+
+    continue;
+  }
 
   // =========================
-  // 🛍️ HANDLE PRODUCT
+  // 🛍️ NORMAL PRODUCT
   // =========================
+
   const product = await Product.findById(item.productId);
 
   if (!product) {
-    return res.status(400).json({ error: "Invalid product" });
+    return res.status(400).json({
+      error: "Invalid product",
+    });
   }
 
-  const itemTotal = product.price * item.quantity;
+  const variant = item.variant || "";
+
+  if (!variant) {
+    return res.status(400).json({
+      error: `${product.title}: size is required`,
+    });
+  }
+
+  const quantity =
+    Number(item.quantity) || 1;
+
+  const inventory = await Inventory.findOne({
+    product: product._id,
+    active: true,
+  });
+
+  if (!inventory) {
+    return res.status(400).json({
+      error: `Inventory not found for ${product.title}`,
+    });
+  }
+
+  const availableStock = Number(
+    inventory.stock?.[variant] || 0
+  );
+
+  if (
+    inventory.trackInventory &&
+    availableStock < quantity
+  ) {
+    return res.status(400).json({
+      error: `${product.title} (${variant}) has only ${availableStock} left`,
+    });
+  }
+
+  const itemTotal =
+    product.price * quantity;
+
   calculatedSubtotal += itemTotal;
 
   validatedItems.push({
     productId: product._id,
     title: product.title,
-    quantity: item.quantity,
+    quantity,
     price: product.price,
     total: itemTotal,
-    variant: item.variant || "",
-    mainImage: product.images?.[0] || "default.jpg",
+    variant,
+    mainImage:
+      product.images?.[0] || "default.jpg",
   });
 }
 
@@ -286,6 +379,12 @@ if (!userId) {
       paymentStatus: "pending",
       orderStatus: initialOrderStatus,
     });
+
+    if (paymentMethod === "cod") {
+ await updateOrderInventory(order, "decrease");
+}
+
+
 
     // =========================
     // 👤 Guest order linking
@@ -441,9 +540,12 @@ router.post("/webhook", async (req, res) => {
       await paymentDoc.save();
 
       // ✅ update order
-      order.paymentStatus = "paid";
-      order.orderStatus = "confirmed";
-      await order.save();
+ order.paymentStatus = "paid";
+order.orderStatus = "confirmed";
+
+await order.save();
+
+await updateOrderInventory(order, "decrease");
 
       console.log("✅ Webhook: Payment captured updated");
     }
@@ -828,7 +930,7 @@ router.put("/cancel",optionalAuth, async (req, res) => {
       { orderStatus: "cancelled" }, // middleware will handle history
       { new: true }
     );
-
+    await updateOrderInventory(order, "increase");
     res.json({
       success: true,
       message: "Order cancelled successfully",
@@ -840,5 +942,16 @@ router.put("/cancel",optionalAuth, async (req, res) => {
     res.status(500).json({ error: "Cancel failed" });
   }
 });
+
+
+
+
+
+
+
+
+
+
+
 
 export default router;
