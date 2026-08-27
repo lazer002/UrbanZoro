@@ -135,14 +135,16 @@ router.post(
         });
       }
 
-      const stock = {
-        XS: Number(req.body.stock?.XS || 0),
-        S: Number(req.body.stock?.S || 0),
-        M: Number(req.body.stock?.M || 0),
-        L: Number(req.body.stock?.L || 0),
-        XL: Number(req.body.stock?.XL || 0),
-        XXL: Number(req.body.stock?.XXL || 0),
-      };
+      const stock = {};
+
+      for (const [size, quantity] of Object.entries(
+        req.body.stock || {}
+      )) {
+        stock[size] = Math.max(
+          0,
+          Number(quantity) || 0
+        );
+      }
 
       const trackInventory =
         req.body.trackInventory ?? true;
@@ -151,23 +153,38 @@ router.post(
         product: req.body.product,
         sku: req.body.sku,
         stock,
-        reserved: Number(req.body.reserved || 0),
-        lowStockThreshold: Number(
-          req.body.lowStockThreshold ?? 5
+
+        reserved: Math.max(
+          0,
+          Number(req.body.reserved) || 0
         ),
+
+        lowStockThreshold: Math.max(
+          0,
+          Number(
+            req.body.lowStockThreshold ?? 5
+          )
+        ),
+
         trackInventory,
+
         allowBackorder:
           req.body.allowBackorder ?? false,
-        active: req.body.active ?? true,
+
+        active:
+          req.body.active ?? true,
       });
 
       await syncProductStock(inventory);
 
-      const updatedProduct = await Product.findById(
-        inventory.product
-      ).select("_id publicId title isOutOfStock");
+      const updatedProduct =
+        await Product.findById(
+          inventory.product
+        ).select(
+          "_id publicId title isOutOfStock"
+        );
 
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         inventory,
         product: updatedProduct,
@@ -178,7 +195,7 @@ router.post(
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         error: error.message,
       });

@@ -21,14 +21,15 @@ const inventorySchema = new mongoose.Schema(
       index: true,
     },
 
-    stock: {
-      XS: { type: Number, default: 0, min: 0 },
-      S: { type: Number, default: 0, min: 0 },
-      M: { type: Number, default: 0, min: 0 },
-      L: { type: Number, default: 0, min: 0 },
-      XL: { type: Number, default: 0, min: 0 },
-      XXL: { type: Number, default: 0, min: 0 },
-    },
+stock: {
+  type: Map,
+  of: {
+    type: Number,
+    min: 0,
+    default: 0,
+  },
+  default: {},
+},
 
     reserved: {
       type: Number,

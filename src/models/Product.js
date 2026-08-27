@@ -1,7 +1,11 @@
 import mongoose from "mongoose";
 import crypto from "crypto";
+import { getNextProductSeq } from "./Counter.js";
 
-const SIZE_NAMES = ["XS", "S", "M", "L", "XL", "XXL"];
+const SIZE_TYPES = {
+  apparel: ["XS", "S", "M", "L", "XL", "XXL"],
+  pants: ["28", "30", "32", "34", "36", "38", "40"],
+};
 
 const productSchema = new mongoose.Schema(
   {
@@ -76,19 +80,18 @@ const productSchema = new mongoose.Schema(
       index: true,
     },
 
-    sizes: [
-      {
-        name: {
-          type: String,
-          enum: SIZE_NAMES,
-          required: true,
-        },
-        active: {
-          type: Boolean,
-          default: true,
-        },
-      },
-    ],
+sizes: [
+  {
+    name: {
+      type: String,
+      required: true,
+    },
+    active: {
+      type: Boolean,
+      default: true,
+    },
+  },
+],
 
     category: {
       type: String,
@@ -174,9 +177,9 @@ productSchema.pre("validate", async function (next) {
     this.publicId = crypto.randomUUID();
   }
 
-  if (!this.sku) {
-    const count = await mongoose.models.Product.countDocuments();
-    this.sku = `GAR-${String(count + 1).padStart(6, "0")}`;
+   if (!this.sku) {
+    const seq = await getNextProductSeq();
+    this.sku = `GAR-${String(seq).padStart(6, "0")}`;
   }
 
   if (!this.slug && this.title) {

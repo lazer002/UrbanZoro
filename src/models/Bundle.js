@@ -119,7 +119,12 @@ const bundleSchema = new Schema(
       default: false,
       index: true,
     },
-
+isCustomBundle:{
+ type: Boolean,
+      default: false,
+        index: true,
+          required: true,
+},
     isOutOfStock: {
       type: Boolean,
       default: false,

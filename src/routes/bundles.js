@@ -3,15 +3,19 @@
 import express from "express";
 import { Bundle } from "../models/Bundle.js";
 import { Product } from "../models/Product.js";
-import { requireAuth, requireAdmin } from "../middleware/auth.js";
+import { requireAuth, requireAdmin, optionalAuth } from "../middleware/auth.js";
 
+import {
+  deleteSupabaseImages,
+
+} from "../utils/helper.js";
 const router = express.Router();
 
 /* =========================
    GET ALL BUNDLES
 ========================= */
 
-router.get("/", async (req, res) => {
+router.get("/",optionalAuth, async (req, res) => {
   try {
     const {
       category,
@@ -119,7 +123,7 @@ router.get("/", async (req, res) => {
    GET SINGLE BUNDLE
 ========================= */
 
-router.get("/:publicId", async (req, res) => {
+router.get("/:publicId",optionalAuth, async (req, res) => {
   try {
     console.log(req.params.publicId)
     const bundle = await Bundle.findOne({
@@ -153,13 +157,16 @@ router.get("/:publicId", async (req, res) => {
 /* =========================
    CREATE BUNDLE
 ========================= */
-
 router.post(
   "/",
   requireAuth,
   requireAdmin,
   async (req, res) => {
+    let bundle = null;
+
     try {
+      console.log(req.body);
+
       const {
         title,
         description,
@@ -246,7 +253,7 @@ router.post(
             product.isOutOfStock === true
         );
 
-      const bundle = await Bundle.create({
+      bundle = await Bundle.create({
         title: title.trim(),
 
         description:
@@ -266,8 +273,7 @@ router.post(
             ? Number(discount)
             : calculatedDiscount,
 
-        currency:
-          currency || "INR",
+        currency: currency || "INR",
 
         mainImages:
           Array.isArray(mainImages)
@@ -279,14 +285,11 @@ router.post(
             ? tags
             : [],
 
-        active:
-          active ?? true,
+        active: active ?? true,
 
-        published:
-          published ?? true,
+        published: published ?? true,
 
-        featured:
-          featured ?? false,
+        featured: featured ?? false,
 
         isNewBundle:
           isNewBundle ?? false,
@@ -308,7 +311,7 @@ router.post(
           "title price oldPrice images sizes isOutOfStock"
         );
 
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         bundle: populatedBundle,
       });
@@ -318,7 +321,33 @@ router.post(
         error
       );
 
-      res.status(500).json({
+      // Mongo cleanup
+      try {
+        if (bundle?._id) {
+          await Bundle.deleteOne({
+            _id: bundle._id,
+          });
+        }
+      } catch (cleanupError) {
+        console.error(
+          "BUNDLE MONGO CLEANUP ERROR:",
+          cleanupError
+        );
+      }
+
+      // Supabase cleanup
+      try {
+        await deleteSupabaseImages(
+          getUploadedImages(req.body)
+        );
+      } catch (cleanupError) {
+        console.error(
+          "BUNDLE IMAGE CLEANUP ERROR:",
+          cleanupError
+        );
+      }
+
+      return res.status(500).json({
         success: false,
         error:
           error.message ||
@@ -327,7 +356,6 @@ router.post(
     }
   }
 );
-
 
 /* =========================
    UPDATE BUNDLE
@@ -581,18 +609,39 @@ router.delete(
   requireAdmin,
   async (req, res) => {
     try {
-      const bundle =
-        await Bundle.findByIdAndDelete(
-          req.params.id
-        );
+      const bundle = await Bundle.findById(
+        req.params.id
+      );
 
       if (!bundle) {
         return res.status(404).json({
+          success: false,
           message: "Bundle not found",
         });
       }
 
-      res.json({
+      const images = Array.isArray(
+        bundle.mainImages
+      )
+        ? [...bundle.mainImages]
+        : [];
+
+      // Delete MongoDB first
+      await bundle.deleteOne();
+
+      // Delete Supabase images
+      try {
+        if (images.length) {
+          await deleteSupabaseImages(images);
+        }
+      } catch (imageError) {
+        console.error(
+          "BUNDLE IMAGE DELETE ERROR:",
+          imageError
+        );
+      }
+
+      return res.json({
         success: true,
         message:
           "Bundle deleted successfully",
@@ -603,9 +652,10 @@ router.delete(
         error
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         message: "Server error",
+        error: error.message,
       });
     }
   }

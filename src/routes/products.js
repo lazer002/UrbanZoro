@@ -1,9 +1,12 @@
 import express from 'express'
 import { Product } from '../models/Product.js'
-import { requireAuth, requireAdmin } from '../middleware/auth.js'
+import { requireAuth, requireAdmin, optionalAuth } from '../middleware/auth.js'
 import { Category } from '../models/Category.js';
 import { Inventory } from "../models/Inventory.js";
-
+import {
+  deleteSupabaseImages,
+  
+} from "../utils/helper.js";
 const router = express.Router()
 
 router.get("/by-ids", async (req, res) => {
@@ -32,352 +35,251 @@ router.get("/by-ids", async (req, res) => {
 
 
 
-router.get("/", async (req, res) => {
-console.log("ssss",req.body)
+router.get("/",optionalAuth, async (req, res) => {
   try {
-
-
     res.set("Cache-Control", "no-store");
 
     const {
-
       category,
       q,
-
       limit = 100,
       page = 1,
-
       sort = "newest",
-
       priceRange,
-
       color,
       size,
       fabric,
       fit,
-
       inStock,
       isNew,
       onSale,
-
     } = req.query;
 
-    // FILTER OBJECT
     const filter = {
       published: true,
+      active: true,
     };
 
-    /*
-    ========================
-    CATEGORY
-    ========================
-    */
+    // CATEGORY
+    if (category && category !== "All") {
+      const normalizedCategory =
+        category.toLowerCase().trim();
 
-    if (
-      category &&
-      category !== "All"
-    ) {
+      const cat = await Category.findOne({
+        $or: [
+          {
+            name: {
+              $regex: `^${normalizedCategory}$`,
+              $options: "i",
+            },
+          },
+          {
+            slug: {
+              $regex: `^${normalizedCategory}$`,
+              $options: "i",
+            },
+          },
+        ],
+      }).lean();
 
-      const isObjectId =
-        /^[0-9a-fA-F]{24}$/.test(
-          category
-        );
-
-      if (isObjectId) {
-
-        filter.category = category;
-
-      } else {
-
-        const cat =
-          await Category.findOne({
-            $or: [
-              {
-                name: {
-                  $regex: `^${category}$`,
-                  $options: "i",
-                },
-              },
-              {
-                slug: {
-                  $regex: `^${category}$`,
-                  $options: "i",
-                },
-              },
-            ],
-          });
-
-        if (cat) {
-          filter.category = cat._id;
-        }
-
-      }
-
+      filter.category = cat
+        ? cat.slug
+        : normalizedCategory;
     }
 
-    /*
-    ========================
-    SEARCH
-    ========================
-    */
-
-    if (q) {
-
+    // SEARCH
+    if (q?.trim()) {
       filter.title = {
-        $regex: q,
+        $regex: q.trim(),
         $options: "i",
       };
-
     }
 
-    /*
-    ========================
-    PRICE RANGE
-    ========================
-    */
-
+    // PRICE
     if (priceRange) {
+      switch (priceRange) {
+        case "0-500":
+          filter.price = {
+            $gte: 0,
+            $lte: 500,
+          };
+          break;
 
-      if (priceRange === "0-500") {
+        case "500-1000":
+          filter.price = {
+            $gte: 500,
+            $lte: 1000,
+          };
+          break;
 
-        filter.price = {
-          $gte: 0,
-          $lte: 500,
-        };
+        case "1000-2000":
+          filter.price = {
+            $gte: 1000,
+            $lte: 2000,
+          };
+          break;
 
+        case "2000+":
+          filter.price = {
+            $gte: 2000,
+          };
+          break;
       }
-
-      else if (
-        priceRange === "500-1000"
-      ) {
-
-        filter.price = {
-          $gte: 500,
-          $lte: 1000,
-        };
-
-      }
-
-      else if (
-        priceRange === "1000-2000"
-      ) {
-
-        filter.price = {
-          $gte: 1000,
-          $lte: 2000,
-        };
-
-      }
-
-      else if (
-        priceRange === "2000+"
-      ) {
-
-        filter.price = {
-          $gte: 2000,
-        };
-
-      }
-
     }
 
-    /*
-    ========================
-    COLOR
-    ========================
-    */
-
+    // COLOR
     if (color) {
-
       filter.colors = {
         $in: Array.isArray(color)
           ? color
           : [color],
       };
-
     }
 
-    /*
-    ========================
-    SIZE
-    ========================
-    */
-
+    // SIZE
     if (size) {
+      const sizes = Array.isArray(size)
+        ? size
+        : [size];
 
-      filter.sizes = {
-        $in: Array.isArray(size)
-          ? size
-          : [size],
+      filter["sizes.name"] = {
+        $in: sizes,
       };
-
     }
 
-    /*
-    ========================
-    FABRIC
-    ========================
-    */
-
+    // FABRIC
     if (fabric) {
-
       filter.fabric = {
         $in: Array.isArray(fabric)
           ? fabric
           : [fabric],
       };
-
     }
 
-    /*
-    ========================
-    FIT
-    ========================
-    */
-
+    // FIT
     if (fit) {
-
       filter.fit = {
         $in: Array.isArray(fit)
           ? fit
           : [fit],
       };
-
     }
 
-    /*
-    ========================
-    STOCK
-    ========================
-    */
-
+    // STOCK
     if (inStock === "true") {
-
-      filter.stock = {
-        $gt: 0,
-      };
-
+      filter.isOutOfStock = false;
     }
 
-    /*
-    ========================
-    SALE
-    ========================
-    */
-
+    // SALE
     if (onSale === "true") {
-
       filter.onSale = true;
-
     }
 
-    /*
-    ========================
-    NEW ARRIVALS
-    ========================
-    */
-
+    // NEW
     if (isNew === "true") {
-
       filter.isNewProduct = true;
-
     }
 
-    /*
-    ========================
-    SORTING
-    ========================
-    */
-
+    // SORT
     let sortOption = {
       createdAt: -1,
     };
 
     if (sort === "low-high") {
-
       sortOption = {
         price: 1,
       };
-
-    }
-
-    else if (
-      sort === "high-low"
-    ) {
-
+    } else if (sort === "high-low") {
       sortOption = {
         price: -1,
       };
-
-    }
-
-    else if (
-      sort === "popular"
-    ) {
-
+    } else if (sort === "popular") {
       sortOption = {
         sold: -1,
       };
-
     }
 
-    /*
-    ========================
-    TOTAL COUNT
-    ========================
-    */
+    const pageNumber = Math.max(
+      Number(page) || 1,
+      1
+    );
 
-    const total = await Product.countDocuments(filter);
+    const limitNumber = Math.min(
+      Math.max(Number(limit) || 100, 1),
+      100
+    );
 
-const products = await Product.find(filter)
-  .sort(sortOption)
-  .skip((Number(page) - 1) * Number(limit))
-  .limit(Number(limit))
-  .lean();
+    const skip =
+      (pageNumber - 1) * limitNumber;
 
-const productIds = products.map((product) => product._id);
+    // RUN COUNT + PRODUCTS IN PARALLEL
+    const [total, products] =
+      await Promise.all([
+        Product.countDocuments(filter),
 
-const inventories = await Inventory.find({
-  product: { $in: productIds },
-  active: true,
-})
-  .select("product stock")
-  .lean();
+        Product.find(filter)
+          .sort(sortOption)
+          .skip(skip)
+          .limit(limitNumber)
+          .lean(),
+      ]);
 
-const inventoryMap = new Map(
-  inventories.map((inventory) => [
-    String(inventory.product),
-    inventory.stock,
-  ])
-);
+    // INVENTORY
+    const productIds = products.map(
+      (product) => product._id
+    );
 
-const items = products.map((product) => ({
-  ...product,
-  inventory: inventoryMap.get(String(product._id)) || {},
-}));
+    const inventories =
+      productIds.length
+        ? await Inventory.find({
+            product: {
+              $in: productIds,
+            },
+            active: true,
+          })
+            .select("product stock")
+            .lean()
+        : [];
 
-return res.json({
-  items,
-  total,
-  currentPage: Number(page),
-  totalPages: Math.ceil(
-    total / Number(limit)
-  ),
-});
-  
+    const inventoryMap = new Map(
+      inventories.map((inventory) => [
+        String(inventory.product),
+        inventory.stock || {},
+      ])
+    );
+
+    const items = products.map(
+      (product) => ({
+        ...product,
+
+        inventory:
+          inventoryMap.get(
+            String(product._id)
+          ) || {},
+      })
+    );
+
+    return res.json({
+      items,
+      total,
+      currentPage: pageNumber,
+      totalPages: Math.ceil(
+        total / limitNumber
+      ),
+    });
   } catch (error) {
-
-    console.error(error);
+    console.error(
+      "GET PRODUCTS ERROR:",
+      error
+    );
 
     return res.status(500).json({
       message: "Server error",
     });
-
   }
-
 });
 
-router.get("/search", async (req, res) => {
+router.get("/search",optionalAuth, async (req, res) => {
   try {
     console.log("Search query:", req.query);
     const { q } = req.query;
@@ -413,28 +315,44 @@ router.get("/search", async (req, res) => {
 
 
 // Create Product + Inventory
+
 router.post(
   "/",
   requireAuth,
   requireAdmin,
   async (req, res) => {
+    console.log(req.body);
+
+    const uploadedImages = Array.isArray(req.body.images)
+      ? [...req.body.images]
+      : [];
+
+    let product = null;
+
     try {
-      const product = await Product.create({
-  ...req.body,
-  isOutOfStock: true,
-});
+      const productData = {
+        ...req.body,
+        isOutOfStock: true,
+      };
+      product = await Product.create(productData);
+
+      const stock = {};
+
+      for (const size of product.sizes || []) {
+        const name =
+          typeof size === "string"
+            ? size
+            : size.name;
+
+        if (name) {
+          stock[name] = 0;
+        }
+      }
 
       const inventory = await Inventory.create({
         product: product._id,
         sku: product.sku,
-        stock: {
-          XS: 0,
-          S: 0,
-          M: 0,
-          L: 0,
-          XL: 0,
-          XXL: 0,
-        },
+        stock,
         reserved: 0,
         lowStockThreshold: 5,
         trackInventory: true,
@@ -442,17 +360,65 @@ router.post(
         active: true,
       });
 
-      res.status(201).json({
+      return res.status(201).json({
         success: true,
         product,
         inventory,
       });
     } catch (error) {
-      console.error("CREATE PRODUCT ERROR:", error);
+      console.error(
+        "CREATE PRODUCT ERROR:",
+        error
+      );
 
-      res.status(500).json({
+      // =========================
+      // MONGO CLEANUP
+      // =========================
+
+      try {
+        if (product?._id) {
+          await Inventory.deleteOne({
+            product: product._id,
+          });
+
+          await Product.deleteOne({
+            _id: product._id,
+          });
+        }
+      } catch (cleanupError) {
+        console.error(
+          "MONGO CLEANUP ERROR:",
+          cleanupError
+        );
+      }
+
+      // =========================
+      // SUPABASE CLEANUP
+      // =========================
+
+      try {
+        if (uploadedImages.length) {
+          console.log(
+            "ROLLING BACK IMAGES:",
+            uploadedImages
+          );
+
+          await deleteSupabaseImages(
+            uploadedImages
+          );
+        }
+      } catch (cleanupError) {
+        console.error(
+          "SUPABASE CLEANUP ERROR:",
+          cleanupError
+        );
+      }
+
+      return res.status(500).json({
         success: false,
-        error: error.message,
+        error:
+          error.message ||
+          "Failed to create product",
       });
     }
   }
@@ -504,13 +470,16 @@ router.put(
 );
 
 // Delete Product + Inventory
+
 router.delete(
   "/:productId",
   requireAuth,
   requireAdmin,
   async (req, res) => {
     try {
-      const product = await Product.findById(req.params.productId);
+      const product = await Product.findById(
+        req.params.productId
+      );
 
       if (!product) {
         return res.status(404).json({
@@ -518,20 +487,35 @@ router.delete(
         });
       }
 
+      // Save images BEFORE deleting product
+      const images = Array.isArray(product.images)
+        ? [...product.images]
+        : [];
+
+      // Delete inventory
       await Inventory.findOneAndDelete({
         product: product._id,
       });
 
+      // Delete Supabase images
+      if (images.length) {
+        await deleteSupabaseImages(images);
+      }
+
+      // Delete product
       await product.deleteOne();
 
-      res.json({
+      return res.json({
         success: true,
         ok: true,
       });
     } catch (error) {
-      console.error("DELETE PRODUCT ERROR:", error);
+      console.error(
+        "DELETE PRODUCT ERROR:",
+        error
+      );
 
-      res.status(500).json({
+      return res.status(500).json({
         success: false,
         error: error.message,
       });

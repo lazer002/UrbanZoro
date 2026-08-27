@@ -58,7 +58,9 @@ for (const item of items) {
   // =========================
 
   if (item.bundleId) {
-    const bundle = await Bundle.findById(item.bundleId);
+    const bundle = await Bundle.findById(
+      item.bundleId
+    );
 
     if (!bundle) {
       return res.status(400).json({
@@ -77,7 +79,9 @@ for (const item of items) {
     const bundleProductsValidated = [];
 
     for (const bp of item.bundleProducts || []) {
-      const product = await Product.findById(bp.productId);
+      const product = await Product.findById(
+        bp.productId
+      );
 
       if (!product) {
         return res.status(400).json({
@@ -85,9 +89,15 @@ for (const item of items) {
         });
       }
 
-      const variant = bp.variant || "";
-      const quantity = Number(bp.quantity) || 1;
-      const requiredStock = quantity * bundleQuantity;
+      const variant = String(
+        bp.variant || ""
+      ).trim();
+
+      const quantity =
+        Number(bp.quantity) || 1;
+
+      const requiredStock =
+        quantity * bundleQuantity;
 
       if (!variant) {
         return res.status(400).json({
@@ -95,10 +105,11 @@ for (const item of items) {
         });
       }
 
-      const inventory = await Inventory.findOne({
-        product: product._id,
-        active: true,
-      });
+      const inventory =
+        await Inventory.findOne({
+          product: product._id,
+          active: true,
+        });
 
       if (!inventory) {
         return res.status(400).json({
@@ -106,12 +117,18 @@ for (const item of items) {
         });
       }
 
-      const availableStock = Number(
-        inventory.stock?.[variant] || 0
-      );
+      const availableStock =
+        inventory.stock instanceof Map
+          ? Number(
+              inventory.stock.get(variant) || 0
+            )
+          : Number(
+              inventory.stock?.[variant] || 0
+            );
 
       if (
         inventory.trackInventory &&
+        !inventory.allowBackorder &&
         availableStock < requiredStock
       ) {
         return res.status(400).json({
@@ -125,7 +142,8 @@ for (const item of items) {
         variant,
         quantity,
         price: product.price,
-        mainImage: product.images?.[0] || "",
+        mainImage:
+          product.images?.[0] || "",
       });
     }
 
@@ -136,8 +154,10 @@ for (const item of items) {
       quantity: bundleQuantity,
       price: bundle.price,
       total: itemTotal,
-      mainImage: item.mainImage || "default.jpg",
-      bundleProducts: bundleProductsValidated,
+      mainImage:
+        item.mainImage || "default.jpg",
+      bundleProducts:
+        bundleProductsValidated,
     });
 
     continue;
@@ -155,8 +175,21 @@ for (const item of items) {
 
     const bundleProductsValidated = [];
 
-    for (const bp of item.bundleProducts || []) {
-      const product = await Product.findById(bp.productId);
+    if (
+      !Array.isArray(item.bundleProducts) ||
+      item.bundleProducts.length === 0
+    ) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Custom bundle must contain products",
+      });
+    }
+
+    for (const bp of item.bundleProducts) {
+      const product = await Product.findById(
+        bp.productId
+      );
 
       if (!product) {
         return res.status(400).json({
@@ -168,8 +201,9 @@ for (const item of items) {
       const quantity =
         Number(bp.quantity) || 1;
 
-      const variant =
-        bp.variant || "";
+      const variant = String(
+        bp.variant || ""
+      ).trim();
 
       if (!variant) {
         return res.status(400).json({
@@ -178,10 +212,11 @@ for (const item of items) {
         });
       }
 
-      const inventory = await Inventory.findOne({
-        product: product._id,
-        active: true,
-      });
+      const inventory =
+        await Inventory.findOne({
+          product: product._id,
+          active: true,
+        });
 
       if (!inventory) {
         return res.status(400).json({
@@ -193,12 +228,18 @@ for (const item of items) {
       const requiredStock =
         quantity * bundleQuantity;
 
-      const availableStock = Number(
-        inventory.stock?.[variant] || 0
-      );
+      const availableStock =
+        inventory.stock instanceof Map
+          ? Number(
+              inventory.stock.get(variant) || 0
+            )
+          : Number(
+              inventory.stock?.[variant] || 0
+            );
 
       if (
         inventory.trackInventory &&
+        !inventory.allowBackorder &&
         availableStock < requiredStock
       ) {
         return res.status(400).json({
@@ -208,7 +249,8 @@ for (const item of items) {
       }
 
       originalBundlePrice +=
-        product.price * quantity;
+        Number(product.price || 0) *
+        quantity;
 
       bundleProductsValidated.push({
         productId: product._id,
@@ -216,7 +258,8 @@ for (const item of items) {
         variant,
         quantity,
         price: product.price,
-        mainImage: product.images?.[0] || "",
+        mainImage:
+          product.images?.[0] || "",
       });
     }
 
@@ -227,25 +270,41 @@ for (const item of items) {
       (discountPercentage / 100);
 
     const customBundlePrice = Math.round(
-      originalBundlePrice - discountAmount
+      originalBundlePrice -
+        discountAmount
     );
 
     const itemTotal =
-      customBundlePrice * bundleQuantity;
+      customBundlePrice *
+      bundleQuantity;
 
     calculatedSubtotal += itemTotal;
 
     validatedItems.push({
       customBundle: true,
-      title: item.title || "Custom Bundle",
+
+      title:
+        item.title || "Custom Bundle",
+
       quantity: bundleQuantity,
+
       price: customBundlePrice,
-      originalPrice: originalBundlePrice,
+
+      originalPrice:
+        originalBundlePrice,
+
       discountPercentage,
-      discountAmount: Math.round(discountAmount),
+
+      discountAmount:
+        Math.round(discountAmount),
+
       total: itemTotal,
-      mainImage: item.mainImage || "",
-      bundleProducts: bundleProductsValidated,
+
+      mainImage:
+        item.mainImage || "",
+
+      bundleProducts:
+        bundleProductsValidated,
     });
 
     continue;
@@ -255,7 +314,9 @@ for (const item of items) {
   // 🛍️ NORMAL PRODUCT
   // =========================
 
-  const product = await Product.findById(item.productId);
+  const product = await Product.findById(
+    item.productId
+  );
 
   if (!product) {
     return res.status(400).json({
@@ -263,7 +324,9 @@ for (const item of items) {
     });
   }
 
-  const variant = item.variant || "";
+  const variant = String(
+    item.variant || ""
+  ).trim();
 
   if (!variant) {
     return res.status(400).json({
@@ -274,10 +337,17 @@ for (const item of items) {
   const quantity =
     Number(item.quantity) || 1;
 
-  const inventory = await Inventory.findOne({
-    product: product._id,
-    active: true,
-  });
+  if (quantity <= 0) {
+    return res.status(400).json({
+      error: "Invalid quantity",
+    });
+  }
+
+  const inventory =
+    await Inventory.findOne({
+      product: product._id,
+      active: true,
+    });
 
   if (!inventory) {
     return res.status(400).json({
@@ -285,12 +355,18 @@ for (const item of items) {
     });
   }
 
-  const availableStock = Number(
-    inventory.stock?.[variant] || 0
-  );
+  const availableStock =
+    inventory.stock instanceof Map
+      ? Number(
+          inventory.stock.get(variant) || 0
+        )
+      : Number(
+          inventory.stock?.[variant] || 0
+        );
 
   if (
     inventory.trackInventory &&
+    !inventory.allowBackorder &&
     availableStock < quantity
   ) {
     return res.status(400).json({
@@ -299,7 +375,8 @@ for (const item of items) {
   }
 
   const itemTotal =
-    product.price * quantity;
+    Number(product.price || 0) *
+    quantity;
 
   calculatedSubtotal += itemTotal;
 
@@ -311,10 +388,10 @@ for (const item of items) {
     total: itemTotal,
     variant,
     mainImage:
-      product.images?.[0] || "default.jpg",
+      product.images?.[0] ||
+      "default.jpg",
   });
 }
-
     const shippingFee = 0; // you can make dynamic later
     const finalTotal = calculatedSubtotal + shippingFee;
 
