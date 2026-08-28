@@ -54,7 +54,7 @@ router.get("/",optionalAuth, async (req, res) => {
       isNew,
       onSale,
     } = req.query;
-
+console.log("req.query",req.query)
     const filter = {
       published: true,
       active: true,
@@ -80,10 +80,15 @@ router.get("/",optionalAuth, async (req, res) => {
             },
           },
         ],
-      }).lean();
+      })
+      .select("_id name slug")
+      .lean();
 
       filter.category = cat._id;
+
     }
+
+
 
     // SEARCH
     if (q?.trim()) {
@@ -259,7 +264,6 @@ router.get("/",optionalAuth, async (req, res) => {
     );
 
 
-    console.log(items[0])
     return res.json({
       items,
       total,

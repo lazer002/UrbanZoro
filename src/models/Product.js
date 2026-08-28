@@ -205,9 +205,7 @@ productSchema.pre("validate", async function (next) {
     this.discount = 0;
   }
 
-  if (this.category) {
-    this.category = this.category.toLowerCase().trim();
-  }
+
 
   next();
 });
