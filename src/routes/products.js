@@ -82,9 +82,7 @@ router.get("/",optionalAuth, async (req, res) => {
         ],
       }).lean();
 
-      filter.category = cat
-        ? cat.slug
-        : normalizedCategory;
+      filter.category = cat._id;
     }
 
     // SEARCH
@@ -218,6 +216,7 @@ router.get("/",optionalAuth, async (req, res) => {
         Product.countDocuments(filter),
 
         Product.find(filter)
+          .populate("category", "name slug")
           .sort(sortOption)
           .skip(skip)
           .limit(limitNumber)
@@ -259,6 +258,8 @@ router.get("/",optionalAuth, async (req, res) => {
       })
     );
 
+
+    console.log(items[0])
     return res.json({
       items,
       total,
