@@ -1,6 +1,5 @@
 import mongoose from "mongoose";
 
-const SIZE_VALUES = ["XS", "S", "M", "L", "XL", "XXL"];
 
 const inventorySchema = new mongoose.Schema(
   {
@@ -68,12 +67,10 @@ stock: {
 inventorySchema.virtual("available").get(function () {
   if (!this.trackInventory) return Infinity;
 
-  const totalStock = SIZE_VALUES.reduce(
-    (total, size) => total + (this.stock?.[size] || 0),
-    0
+  return Math.max(
+    0,
+    this.totalStock - (Number(this.reserved) || 0)
   );
-
-  return Math.max(0, totalStock - this.reserved);
 });
 
 inventorySchema.set("toJSON", { virtuals: true });

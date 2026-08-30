@@ -16,6 +16,8 @@ import searchRouter from './routes/search.js'
 import publicRouter from './routes/public.js'
 import bundleRoutes from "./routes/bundles.js";
 import adminOrdersRouter from './routes/adminOrder.js'
+import adminBundleRouter from './routes/adminBundles.js'
+import adminProductRouter from './routes/adminProduct.js'
 import wishlistRouter from './routes/wishlist.js'
 import returnsRouter from './routes/return.js'
 import notificationRoutes from './routes/notification.js'
@@ -94,6 +96,8 @@ app.use('/api/admin/upload', uploadRouter)
 app.use('/api/admin/stats', statsRouter)
 app.use("/api/bundles", bundleRoutes)
 app.use('/api/admin/orders', adminOrdersRouter)
+app.use('/api/admin/bundles', adminBundleRouter)
+app.use('/api/admin/products', adminProductRouter)
 app.use('/api', publicRouter)
 app.use('/api/wishlist', wishlistRouter)
 app.use('/api/returns', returnsRouter)

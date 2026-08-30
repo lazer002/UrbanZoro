@@ -85,7 +85,7 @@ router.get("/",optionalAuth, async (req, res) => {
       Bundle.find(filter)
         .populate(
           "products",
-          "title price oldPrice images sizes isOutOfStock active published"
+          "publicId title price oldPrice images sizes isOutOfStock active published"
         )
         .sort({ createdAt: -1 })
         .skip(

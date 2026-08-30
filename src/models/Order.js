@@ -1,7 +1,13 @@
 import mongoose from "mongoose";
-
+import crypto from "crypto"
 const OrderSchema = new mongoose.Schema(
   {
+    publicOrderId: {
+  type: String,
+  unique: true,
+  index: true,
+  default: () => crypto.randomUUID(),
+},
     userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: false },
     guestId: {
       type: String,

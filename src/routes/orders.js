@@ -806,7 +806,7 @@ if (paymentData.status !== "captured") {
 
 
 
-router.get("/track", async (req, res) => {
+router.get("/track",optionalAuth, async (req, res) => {
   try {
     console.log("Track order query:", req.query);
     const { email, orderNumber } = req.query;
@@ -967,8 +967,8 @@ router.post("/merge-orders", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Merge failed" });
   }
 });
-router.get("/:id", async (req, res) => {
-  const order = await Order.findById(req.params.id);
+router.get("/:publicOrderId",optionalAuth, async (req, res) => {
+  const order = await Order.findById(req.params.publicOrderId);
   res.json({ order });
 });
 router.put("/cancel",optionalAuth, async (req, res) => {
