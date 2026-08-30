@@ -83,13 +83,16 @@ export const syncProductStockStatus = async (productId) => {
     0
   );
 
+  const isOutOfStock =
+    inventory.trackInventory &&
+    !inventory.allowBackorder &&
+    totalStock <= 0;
+
   return Product.findByIdAndUpdate(
     productId,
     {
       $set: {
-        isOutOfStock:
-          inventory.trackInventory &&
-          totalStock <= 0,
+        isOutOfStock,
       },
     },
     {
