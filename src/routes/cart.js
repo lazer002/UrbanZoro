@@ -1,436 +1,1802 @@
-import express from 'express'
-import mongoose from 'mongoose'
-import { optionalAuth, requireAuth } from '../middleware/auth.js'
-import { CartItem } from '../models/CartItem.js'
-import { Product } from '../models/Product.js'
-const router = express.Router()
+// cart.js
 
-// Helper to get cart key (user or guest)
-function cartKey(req) {
+import express from "express";
+import mongoose from "mongoose";
+
+import { CartItem } from "../models/Cart.js";
+import { Product } from "../models/Product.js";
+import { Inventory } from "../models/Inventory.js";
+import { Bundle } from "../models/Bundle.js";
+
+import { optionalAuth, requireAuth } from "../middleware/auth.js";
+
+const router = express.Router();
+
+/* =========================================================
+   HELPERS
+========================================================= */
+
+function getCartOwner(req) {
   if (req.user?.id) {
-    return { user: req.user.id }; // 🔥 ALWAYS priority
+    return {
+      user: new mongoose.Types.ObjectId(String(req.user.id)),
+    };
   }
 
   if (req.guestId) {
-    return { guestId: req.guestId };
+    return {
+      guestId: String(req.guestId),
+    };
   }
 
   return null;
 }
 
-router.get('/',optionalAuth, async (req, res) => {
-  const key = cartKey(req);
+function normalizePublicId(value) {
+  if (value === undefined || value === null) return null;
 
-  try {
-    const items = await CartItem.find(key)
-      .populate('product', 'title price images category categoryName')
-      .populate('bundle', 'title price images')
-       .populate({
-        path: "bundleProducts.product",
-        select: "title price images category categoryName",
-        populate: {
-          path: "category",
-          select: "name",
-        },
-      });
+  const id = String(value).trim();
 
-    res.json({ items }); // ✅ wrap in object for frontend compatibility
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch cart items' });
+  return id || null;
+}
+
+function normalizeSize(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
   }
-});
 
+  return String(value).trim();
+}
 
+function normalizeQuantity(value) {
+  const quantity = Number(value);
 
-// Add to cart with size support
-router.post('/add',optionalAuth, async (req, res) => {
-  console.log("Add to cart request body:", req.body);
-  const key = cartKey(req); // { user: userId } or { guestId }
-  const { productId, quantity = 1, size } = req.body;
+  if (!Number.isInteger(quantity) || quantity < 1) {
+    return null;
+  }
 
-  if (!key || !productId || !size)
-    return res.status(400).json({ error: 'Missing fields: productId or size' });
+  return quantity;
+}
 
-  const product = await Product.findById(productId);
-  if (!product || !product.published)
-    return res.status(404).json({ error: 'Product not found' });
+/* =========================================================
+   PRODUCT
+========================================================= */
 
-  // Filter includes product + size + user/guest
-  const filter = { ...key, product: productId, size };
+async function findProductByPublicId(publicId) {
+  const id = normalizePublicId(publicId);
 
-  // Increment quantity if already exists, else create new
-  const update = { $inc: { quantity: Number(quantity) } };
+  if (!id) return null;
 
-  const item = await CartItem.findOneAndUpdate(filter, update, {
-    new: true, // return updated doc
-    upsert: true, // create if doesn't exist
+  return Product.findOne({
+    publicId: id,
+    active: true,
+    published: true,
   });
+}
 
-  res.json({ message: 'Added to cart', item });
-});
+/* =========================================================
+   BUNDLE
+========================================================= */
 
-router.post("/addbundle", optionalAuth, async (req, res) => {
-  console.log("Add bundle to cart request body:", req.body);
+async function findBundleByPublicId(publicId) {
+  const id = normalizePublicId(publicId);
 
-  const key = cartKey(req);
+  if (!id) return null;
 
-  const {
-    bundleId,
-    customBundle,
-    bundleProducts,
-    quantity = 1,
-    mainImage,
-  } = req.body;
+  return Bundle.findOne({
+    publicId: id,
+    active: {
+      $ne: false,
+    },
+  });
+}
+
+/* =========================================================
+   INVENTORY
+========================================================= */
+
+function mapStock(stock) {
+  if (!stock) return {};
+
+  if (stock instanceof Map) {
+    return Object.fromEntries(
+      [...stock.entries()].map(([key, value]) => [
+        key,
+        Number(value) || 0,
+      ])
+    );
+  }
+
+  if (typeof stock === "object") {
+    return Object.fromEntries(
+      Object.entries(stock).map(([key, value]) => [
+        key,
+        Number(value) || 0,
+      ])
+    );
+  }
+
+  return {};
+}
+
+function buildInventory(inventory) {
+  if (!inventory) {
+    return {
+      stock: {},
+      totalStock: 0,
+      reserved: 0,
+      available: Infinity,
+      trackInventory: false,
+      allowBackorder: false,
+      lowStockThreshold: 0,
+      active: false,
+    };
+  }
+
+  const stock = mapStock(inventory.stock);
+
+  const totalStock = Object.values(stock).reduce(
+    (total, value) => total + Number(value || 0),
+    0
+  );
+
+  const reserved = Number(inventory.reserved || 0);
+
+  const available = inventory.trackInventory
+    ? Math.max(0, totalStock - reserved)
+    : Infinity;
+
+  return {
+    stock,
+    // totalStock,
+    // reserved,
+    // available,
+    // trackInventory: Boolean(inventory.trackInventory),
+    // allowBackorder: Boolean(inventory.allowBackorder),
+    // lowStockThreshold: Number(
+    //   inventory.lowStockThreshold || 0
+    // ),
+    // active: Boolean(inventory.active),
+  };
+}
+
+async function validateInventory({
+  product,
+  size,
+  quantity,
+}) {
+  const inventory = await Inventory.findOne({
+    product: product._id,
+    active: true,
+  }).lean();
+
+  if (!inventory) {
+    return {
+      ok: true,
+      inventory: null,
+      available: Infinity,
+    };
+  }
+
+  if (!inventory.trackInventory) {
+    return {
+      ok: true,
+      inventory,
+      available: Infinity,
+    };
+  }
+
+  const sizes = Array.isArray(product.sizes)
+    ? product.sizes
+    : [];
+
+  if (sizes.length) {
+    if (!size) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Please select a size",
+      };
+    }
+
+    const validSize = sizes.some(
+      (item) =>
+        String(item.name).toLowerCase() ===
+          String(size).toLowerCase() &&
+        item.active !== false
+    );
+
+    if (!validSize) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Invalid size",
+      };
+    }
+  }
+
+  const stock = mapStock(inventory.stock);
+
+  const sizeStock =
+    size !== null
+      ? Number(stock[String(size)] || 0)
+      : Object.values(stock).reduce(
+          (total, value) =>
+            total + Number(value || 0),
+          0
+        );
+
+  const reserved = Number(inventory.reserved || 0);
+
+  const available = Math.max(
+    0,
+    sizeStock - reserved
+  );
 
   if (
-    !key ||
-    (!bundleId && !customBundle) ||
-    !Array.isArray(bundleProducts) ||
-    bundleProducts.length === 0
+    available < quantity &&
+    !inventory.allowBackorder
   ) {
-    return res.status(400).json({
-      error: "Missing fields",
+    return {
+      ok: false,
+      status: 400,
+      error:
+        available <= 0
+          ? "Product is out of stock"
+          : `Only ${available} available`,
+    };
+  }
+
+  return {
+    ok: true,
+    inventory,
+    available,
+  };
+}
+
+/* =========================================================
+   PRODUCT RESPONSE
+========================================================= */
+
+async function makeProductCartData(publicId) {
+  const product =
+    await findProductByPublicId(publicId);
+
+  if (!product) return null;
+
+  const inventory =
+    await Inventory.findOne({
+      product: product._id,
+      active: true,
+    }).lean();
+
+  return {
+    publicId: product.publicId,
+    sku: product.sku || null,
+    title: product.title || null,
+    description: product.description || null,
+    price: product.price,
+    oldPrice: product.oldPrice,
+    discount: product.discount,
+    currency: product.currency,
+    images: product.images || [],
+    sizes: product.sizes || [],
+    category: product.category || null,
+    tags: product.tags || [],
+    active: product.active,
+    published: product.published,
+    onSale: product.onSale,
+    isNewProduct: product.isNewProduct,
+    featured: product.featured,
+    slug: product.slug || null,
+    inventory: buildInventory(inventory),
+  };
+}
+
+/* =========================================================
+   CART RESPONSE
+========================================================= */
+
+async function populateCartItem(item) {
+  const data = item.toObject();
+
+  /*
+   * PRODUCT
+   */
+  if (data.type === "product" && data.publicId) {
+    const product =
+      await makeProductCartData(
+        data.publicId
+      );
+
+    return {
+      ...data,
+      product,
+    };
+  }
+
+  /*
+   * BUNDLE
+   */
+  if (
+    data.type === "bundle" &&
+    Array.isArray(data.bundleProducts)
+  ) {
+    const bundleProducts =
+      await Promise.all(
+        data.bundleProducts.map(
+          async (bundleProduct) => {
+            const product =
+              await makeProductCartData(
+                bundleProduct.publicId
+              );
+
+            return {
+              publicId:
+                bundleProduct.publicId,
+
+              sku:
+                bundleProduct.sku ||
+                product?.sku ||
+                null,
+
+              title:
+                bundleProduct.title ||
+                product?.title ||
+                null,
+
+              image:
+                bundleProduct.image ||
+                product?.images?.[0] ||
+                null,
+
+              size:
+                bundleProduct.size ||
+                null,
+
+              quantity:
+                Number(
+                  bundleProduct.quantity || 1
+                ),
+
+              inventory:
+                product?.inventory || null,
+            };
+          }
+        )
+      );
+
+    let bundle = data.bundle || null;
+
+    /*
+     * PREBUILT BUNDLE
+     */
+    if (
+      !data.isCustomBundle &&
+      data.bundle?.publicId
+    ) {
+      const dbBundle =
+        await findBundleByPublicId(
+          data.bundle.publicId
+        );
+
+      if (dbBundle) {
+        bundle = {
+          publicId:
+            dbBundle.publicId,
+
+          title:
+            dbBundle.title ||
+            data.bundle.title ||
+            null,
+
+          price:
+            dbBundle.price ??
+            data.bundle.price ??
+            0,
+
+          oldPrice:
+            dbBundle.oldPrice ?? 0,
+
+          images:
+            dbBundle.images ||
+            dbBundle.mainImages ||
+            [],
+        };
+      }
+    }
+
+    return {
+      ...data,
+      bundle,
+      bundleProducts,
+    };
+  }
+
+  return data;
+}
+
+/* =========================================================
+   GET CART
+========================================================= */
+
+async function getCartItems(owner) {
+  const items =
+    await CartItem.find(owner)
+      .sort({
+        createdAt: -1,
+      });
+
+  /*
+   * Delete old/broken documents.
+   */
+  const brokenIds =
+    items
+      .filter((item) => {
+        if (item.type === "product") {
+          return !item.publicId;
+        }
+
+        if (item.type === "bundle") {
+          return (
+            !item.bundle &&
+            !Array.isArray(item.bundleProducts)
+          );
+        }
+
+        return true;
+      })
+      .map((item) => item._id);
+
+  if (brokenIds.length) {
+    await CartItem.deleteMany({
+      ...owner,
+      _id: {
+        $in: brokenIds,
+      },
     });
   }
 
-  try {
-    for (const p of bundleProducts) {
-      if (
-        !p.productId ||
-        !mongoose.isValidObjectId(p.productId)
-      ) {
-        return res.status(400).json({
-          error: `Invalid productId: ${p.productId}`,
-        });
+  const validItems =
+    items.filter((item) => {
+      if (item.type === "product") {
+        return Boolean(item.publicId);
       }
-    }
 
-    const products = await Product.find({
-      _id: {
-        $in: bundleProducts.map(
-          (p) => p.productId
-        ),
-      },
-    }).select(
-      "_id title price images category categoryName"
-    );
-
-    const productMap = new Map(
-      products.map((p) => [
-        p._id.toString(),
-        p,
-      ])
-    );
-
-    const forCompare = bundleProducts.map((p) => ({
-      product: String(p.productId),
-      size: p.size ?? "",
-      quantity: Number(p.quantity ?? 1),
-    }));
-
-    const forSave = bundleProducts.map((p) => ({
-      product: new mongoose.Types.ObjectId(
-        p.productId
-      ),
-      size: p.size ?? "",
-      quantity: Number(p.quantity ?? 1),
-    }));
-
-    const canonical = (arr) =>
-      arr
-        .map(
-          (x) =>
-            `${x.product}:${x.size}:${x.quantity}`
-        )
-        .sort()
-        .join("|");
-
-    const newSig = canonical(forCompare);
-
-    const filter = { ...key };
-
-    if (bundleId) {
-      filter.bundle =
-        new mongoose.Types.ObjectId(bundleId);
-    }
-
-    if (customBundle) {
-      filter["customBundle.title"] =
-        customBundle.title;
-
-      filter["customBundle.price"] =
-        customBundle.price;
-    }
-
-    const existingRows =
-      await CartItem.find(filter).exec();
-
-    const matchingRow = existingRows.find(
-      (row) => {
-        const existingCompare =
-          (row.bundleProducts || []).map(
-            (bp) => ({
-              product: bp.product
-                ? bp.product.toString()
-                : String(bp.product),
-              size: bp.size ?? "",
-              quantity: Number(
-                bp.quantity ?? 1
-              ),
-            })
-          );
-
+      if (item.type === "bundle") {
         return (
-          canonical(existingCompare) ===
-          newSig
+          Boolean(item.bundle?.title) &&
+          Array.isArray(item.bundleProducts) &&
+          item.bundleProducts.length > 0
         );
       }
-    );
 
-    if (matchingRow) {
-      matchingRow.quantity =
-        (matchingRow.quantity || 0) +
-        Number(quantity || 1);
+      return false;
+    });
 
-      await matchingRow.save();
+  return Promise.all(
+    validItems.map(populateCartItem)
+  );
+}
 
-      await matchingRow.populate([
-        {
-          path: "bundle",
-          select: "title price images",
-        },
-        {
-          path: "bundleProducts.product",
-          select:
-            "title price images category categoryName",
-          populate: {
-            path: "category",
-            select: "name",
-          },
-        },
-      ]);
+/* =========================================================
+   GET
+========================================================= */
+
+router.get(
+  "/",
+  optionalAuth,
+  async (req, res) => {
+    try {
+      const owner =
+        getCartOwner(req);
+
+      if (!owner) {
+        return res.json({
+          success: true,
+          items: [],
+        });
+      }
+
+      const items =
+        await getCartItems(owner);
 
       return res.json({
-        message: "Bundle quantity updated",
-        item: matchingRow,
+        success: true,
+        items,
+      });
+    } catch (error) {
+      console.error(
+        "GET CART ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error: error.message,
       });
     }
+  }
+);
 
-    const createDoc = {
-      ...key,
+/* =========================================================
+   ADD PRODUCT
+========================================================= */
 
-      mainImage: mainImage || null,
-
-      bundleProducts: forSave,
-
-      quantity: Number(quantity || 1),
-    };
-
-    if (bundleId) {
-      createDoc.bundle =
-        new mongoose.Types.ObjectId(bundleId);
-    }
-
-    if (customBundle) {
-      createDoc.customBundle =
-        customBundle;
-    }
-
-    delete createDoc.product;
-    delete createDoc.size;
-
-    let newItem;
-
+router.post(
+  "/add",
+  optionalAuth,
+  async (req, res) => {
     try {
-      newItem =
-        await CartItem.create(createDoc);
-    } catch (err) {
-      if (err?.code === 11000) {
-        const raceFilter = { ...key };
+      const owner =
+        getCartOwner(req);
 
-        if (bundleId) {
-          raceFilter.bundle =
-            new mongoose.Types.ObjectId(
-              bundleId
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Missing user or guestId",
+        });
+      }
+
+      const publicId =
+        normalizePublicId(
+          req.body.publicId
+        );
+
+      const size =
+        normalizeSize(
+          req.body.size
+        );
+
+      const quantity =
+        normalizeQuantity(
+          req.body.quantity ?? 1
+        );
+
+      if (!publicId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "publicId is required",
+        });
+      }
+
+      if (!quantity) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Invalid quantity",
+        });
+      }
+
+      const product =
+        await findProductByPublicId(
+          publicId
+        );
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Product not found",
+        });
+      }
+
+      const inventoryCheck =
+        await validateInventory({
+          product,
+          size,
+          quantity,
+        });
+
+      if (!inventoryCheck.ok) {
+        return res.status(
+          inventoryCheck.status
+        ).json({
+          success: false,
+          error:
+            inventoryCheck.error,
+        });
+      }
+
+      /*
+       * IMPORTANT:
+       * Cart stores publicId.
+       * No product ObjectId.
+       */
+      const filter = {
+        ...owner,
+        type: "product",
+        publicId: product.publicId,
+        size,
+      };
+
+      let item =
+        await CartItem.findOne(
+          filter
+        );
+
+      if (item) {
+        const nextQuantity =
+          Number(item.quantity || 0) +
+          quantity;
+
+        const nextCheck =
+          await validateInventory({
+            product,
+            size,
+            quantity:
+              nextQuantity,
+          });
+
+        if (!nextCheck.ok) {
+          return res.status(
+            nextCheck.status
+          ).json({
+            success: false,
+            error:
+              nextCheck.error,
+          });
+        }
+
+        item.quantity =
+          nextQuantity;
+
+        await item.save();
+      } else {
+        item =
+          new CartItem({
+            ...owner,
+
+            type: "product",
+
+            publicId:
+              product.publicId,
+
+            sku:
+              product.sku || null,
+
+            title:
+              product.title || null,
+
+            mainImage:
+              product.images?.[0] ||
+              null,
+
+            size,
+
+            quantity,
+          });
+
+        await item.save();
+      }
+
+      const response =
+        await populateCartItem(
+          item
+        );
+
+      return res.json({
+        success: true,
+        message:
+          "Added to cart",
+        item: response,
+      });
+    } catch (error) {
+      console.error(
+        "ADD CART ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to add to cart",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   UPDATE PRODUCT
+========================================================= */
+
+router.post(
+  "/update",
+  optionalAuth,
+  async (req, res) => {
+    try {
+      const owner =
+        getCartOwner(req);
+
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Missing user or guestId",
+        });
+      }
+
+      const publicId =
+        normalizePublicId(
+          req.body.publicId
+        );
+
+      const size =
+        normalizeSize(
+          req.body.size
+        );
+
+      const quantity =
+        normalizeQuantity(
+          req.body.quantity
+        );
+
+      if (!publicId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "publicId is required",
+        });
+      }
+
+      if (!quantity) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Invalid quantity",
+        });
+      }
+
+      const product =
+        await findProductByPublicId(
+          publicId
+        );
+
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Product not found",
+        });
+      }
+
+      const check =
+        await validateInventory({
+          product,
+          size,
+          quantity,
+        });
+
+      if (!check.ok) {
+        return res.status(
+          check.status
+        ).json({
+          success: false,
+          error: check.error,
+        });
+      }
+
+      const item =
+        await CartItem.findOne({
+          ...owner,
+          type: "product",
+          publicId:
+            product.publicId,
+          size,
+        });
+
+      if (!item) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Cart item not found",
+        });
+      }
+
+      item.quantity =
+        quantity;
+
+      await item.save();
+
+      return res.json({
+        success: true,
+        message:
+          "Cart updated",
+        item:
+          await populateCartItem(
+            item
+          ),
+      });
+    } catch (error) {
+      console.error(
+        "UPDATE CART ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to update cart",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   REMOVE PRODUCT / BUNDLE
+========================================================= */
+
+router.post(
+  "/remove",
+  optionalAuth,
+  async (req, res) => {
+    try {
+      const owner =
+        getCartOwner(req);
+
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Missing user or guestId",
+        });
+      }
+
+      const publicId =
+        normalizePublicId(
+          req.body.publicId
+        );
+
+      const size =
+        normalizeSize(
+          req.body.size
+        );
+
+      const bundlePublicId =
+        normalizePublicId(
+          req.body.bundlePublicId
+        );
+
+      const cartItemId =
+        req.body.cartItemId;
+
+      /*
+       * PRODUCT
+       */
+      if (publicId) {
+        const result =
+          await CartItem.findOneAndDelete({
+            ...owner,
+            type: "product",
+            publicId,
+            size,
+          });
+
+        if (!result) {
+          return res.status(404).json({
+            success: false,
+            error:
+              "Cart item not found",
+          });
+        }
+
+        return res.json({
+          success: true,
+          message:
+            "Product removed from cart",
+        });
+      }
+
+      /*
+       * BUNDLE
+       *
+       * cartItemId works for BOTH
+       * custom and prebuilt bundles.
+       */
+      if (cartItemId) {
+        const result =
+          await CartItem.findOneAndDelete({
+            ...owner,
+            _id: cartItemId,
+            type: "bundle",
+          });
+
+        if (!result) {
+          return res.status(404).json({
+            success: false,
+            error:
+              "Bundle not found in cart",
+          });
+        }
+
+        return res.json({
+          success: true,
+          message:
+            "Bundle removed from cart",
+        });
+      }
+
+      /*
+       * PREBUILT BUNDLE
+       */
+      if (bundlePublicId) {
+        const result =
+          await CartItem.findOneAndDelete({
+            ...owner,
+            type: "bundle",
+            isCustomBundle: false,
+            "bundle.publicId":
+              bundlePublicId,
+          });
+
+        if (!result) {
+          return res.status(404).json({
+            success: false,
+            error:
+              "Bundle not found in cart",
+          });
+        }
+
+        return res.json({
+          success: true,
+          message:
+            "Bundle removed from cart",
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error:
+          "publicId, cartItemId or bundlePublicId is required",
+      });
+    } catch (error) {
+      console.error(
+        "REMOVE CART ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to remove cart item",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   CLEAR
+========================================================= */
+
+router.post(
+  "/clear",
+  optionalAuth,
+  async (req, res) => {
+    try {
+      const owner =
+        getCartOwner(req);
+
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Missing user or guestId",
+        });
+      }
+
+      const result =
+        await CartItem.deleteMany(
+          owner
+        );
+
+      return res.json({
+        success: true,
+        message:
+          "Cart cleared",
+        deletedCount:
+          result.deletedCount,
+      });
+    } catch (error) {
+      console.error(
+        "CLEAR CART ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to clear cart",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   ADD BUNDLE
+========================================================= */
+
+router.post(
+  "/addbundle",
+  optionalAuth,
+  async (req, res) => {
+    try {
+      const owner =
+        getCartOwner(req);
+
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Missing user or guestId",
+        });
+      }
+
+      const isCustomBundle =
+        Boolean(
+          req.body.isCustomBundle
+        );
+
+      const bundle =
+        req.body.bundle || {};
+
+      const bundlePublicId =
+        normalizePublicId(
+          bundle.publicId
+        );
+
+      const bundleProducts =
+        Array.isArray(
+          req.body.bundleProducts
+        )
+          ? req.body.bundleProducts
+          : [];
+
+      const quantity =
+        normalizeQuantity(
+          req.body.quantity ?? 1
+        );
+
+      /*
+       * PREBUILT
+       */
+      if (
+        !isCustomBundle &&
+        !bundlePublicId
+      ) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "bundle.publicId is required",
+        });
+      }
+
+      /*
+       * CUSTOM
+       */
+      if (
+        isCustomBundle &&
+        !bundle.title
+      ) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Custom bundle title is required",
+        });
+      }
+
+      if (!bundleProducts.length) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "bundleProducts are required",
+        });
+      }
+
+      if (!quantity) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Invalid quantity",
+        });
+      }
+
+      /*
+       * Resolve every product using publicId.
+       */
+      const resolvedProducts = [];
+
+      for (
+        const bundleProduct of
+          bundleProducts
+      ) {
+        const publicId =
+          normalizePublicId(
+            bundleProduct.publicId
+          );
+
+        const size =
+          normalizeSize(
+            bundleProduct.size
+          );
+
+        const productQuantity =
+          normalizeQuantity(
+            bundleProduct.quantity ?? 1
+          );
+
+        if (!publicId) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "Bundle product publicId is required",
+          });
+        }
+
+        if (!productQuantity) {
+          return res.status(400).json({
+            success: false,
+            error:
+              "Invalid bundle product quantity",
+          });
+        }
+
+        const product =
+          await findProductByPublicId(
+            publicId
+          );
+
+        if (!product) {
+          return res.status(404).json({
+            success: false,
+            error:
+              `Product not found: ${publicId}`,
+          });
+        }
+
+        const check =
+          await validateInventory({
+            product,
+            size,
+            quantity:
+              productQuantity *
+              quantity,
+          });
+
+        if (!check.ok) {
+          return res.status(
+            check.status
+          ).json({
+            success: false,
+            error:
+              `${product.title}: ${check.error}`,
+          });
+        }
+
+        resolvedProducts.push({
+          publicId:
+            product.publicId,
+
+          sku:
+            product.sku || null,
+
+          title:
+            product.title || null,
+
+          image:
+            product.images?.[0] ||
+            null,
+
+          size,
+
+          quantity:
+            productQuantity,
+        });
+      }
+
+      /*
+       * Resolve prebuilt bundle.
+       */
+      let finalBundle = {
+        publicId:
+          null,
+
+        title:
+          bundle.title ||
+          "Custom Bundle",
+
+        price:
+          Number(bundle.price || 0),
+
+        mainImage:
+          bundle.mainImage ||
+          resolvedProducts[0]?.image ||
+          null,
+      };
+
+      if (!isCustomBundle) {
+        const dbBundle =
+          await findBundleByPublicId(
+            bundlePublicId
+          );
+
+        if (!dbBundle) {
+          return res.status(404).json({
+            success: false,
+            error:
+              "Bundle not found",
+          });
+        }
+
+        finalBundle = {
+          publicId:
+            dbBundle.publicId,
+
+          title:
+            dbBundle.title || null,
+
+          price:
+            Number(dbBundle.price || 0),
+
+          mainImage:
+            dbBundle.images?.[0] ||
+            dbBundle.mainImages?.[0] ||
+            bundle.mainImage ||
+            null,
+        };
+      }
+
+      /*
+       * Signature makes custom/prebuilt
+       * bundles behave consistently.
+       */
+      const newSignature =
+        resolvedProducts
+          .map(
+            (item) =>
+              `${item.publicId}:${item.size || ""}:${item.quantity}`
+          )
+          .sort()
+          .join("|");
+
+      const existingItems =
+        await CartItem.find({
+          ...owner,
+          type: "bundle",
+          isCustomBundle,
+        });
+
+      const existing =
+        existingItems.find(
+          (item) => {
+            /*
+             * Prebuilt:
+             * same bundle publicId
+             */
+            if (!isCustomBundle) {
+              return (
+                item.bundle?.publicId ===
+                finalBundle.publicId
+              );
+            }
+
+            /*
+             * Custom:
+             * same products + sizes
+             */
+            const signature =
+              (item.bundleProducts || [])
+                .map(
+                  (product) =>
+                    `${product.publicId}:${product.size || ""}:${product.quantity}`
+                )
+                .sort()
+                .join("|");
+
+            return (
+              signature ===
+              newSignature
             );
+          }
+        );
+
+      /*
+       * Existing bundle.
+       */
+      if (existing) {
+        existing.quantity =
+          Number(
+            existing.quantity || 0
+          ) + quantity;
+
+        await existing.save();
+
+        return res.json({
+          success: true,
+          message:
+            "Bundle quantity updated",
+          item:
+            await populateCartItem(
+              existing
+            ),
+        });
+      }
+
+      /*
+       * New bundle.
+       */
+      const item =
+        new CartItem({
+          ...owner,
+
+          type: "bundle",
+
+          isCustomBundle,
+
+          bundle:
+            finalBundle,
+
+          bundleProducts:
+            resolvedProducts,
+
+          quantity,
+        });
+
+      await item.save();
+
+      return res.json({
+        success: true,
+        message:
+          "Bundle added to cart",
+        item:
+          await populateCartItem(
+            item
+          ),
+      });
+    } catch (error) {
+      console.error(
+        "ADD BUNDLE ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to add bundle",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   UPDATE BUNDLE
+========================================================= */
+
+router.post(
+  "/updatebundle",
+  optionalAuth,
+  async (req, res) => {
+    try {
+      const owner =
+        getCartOwner(req);
+
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Missing user or guestId",
+        });
+      }
+
+      const cartItemId =
+        req.body.cartItemId;
+
+      const quantity =
+        normalizeQuantity(
+          req.body.quantity
+        );
+
+      if (!cartItemId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "cartItemId is required",
+        });
+      }
+
+      if (!quantity) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Invalid quantity",
+        });
+      }
+
+      const item =
+        await CartItem.findOne({
+          ...owner,
+          _id: cartItemId,
+          type: "bundle",
+        });
+
+      if (!item) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Bundle not found in cart",
+        });
+      }
+
+      /*
+       * Validate inventory for the
+       * new bundle quantity.
+       */
+      for (
+        const bundleProduct of
+          item.bundleProducts || []
+      ) {
+        const product =
+          await findProductByPublicId(
+            bundleProduct.publicId
+          );
+
+        if (!product) {
+          return res.status(404).json({
+            success: false,
+            error:
+              `Product not found: ${bundleProduct.publicId}`,
+          });
         }
 
-        if (customBundle) {
-          raceFilter[
-            "customBundle.title"
-          ] = customBundle.title;
+        const check =
+          await validateInventory({
+            product,
+            size:
+              bundleProduct.size,
+            quantity:
+              Number(
+                bundleProduct.quantity || 1
+              ) * quantity,
+          });
 
-          raceFilter[
-            "customBundle.price"
-          ] = customBundle.price;
-        }
-
-        const doc =
-          await CartItem.findOne(raceFilter);
-
-        if (doc) {
-          doc.quantity =
-            (doc.quantity || 0) +
-            Number(quantity || 1);
-
-          await doc.save();
-
-          await doc.populate([
-            {
-              path: "bundle",
-              select: "title price images",
-            },
-            {
-              path: "bundleProducts.product",
-              select:
-                "title price images category categoryName",
-              populate: {
-                path: "category",
-                select: "name",
-              },
-            },
-          ]);
-
-          return res.json({
-            message:
-              "Bundle quantity updated (after race)",
-            item: doc,
+        if (!check.ok) {
+          return res.status(
+            check.status
+          ).json({
+            success: false,
+            error:
+              `${product.title}: ${check.error}`,
           });
         }
       }
 
-      throw err;
-    }
+      item.quantity =
+        quantity;
 
-    const populatedItem =
-      await CartItem.findById(newItem._id)
-        .populate(
-          "bundle",
-          "title price images"
-        )
-        .populate({
-          path: "bundleProducts.product",
-          select:
-            "title price images category categoryName",
-          populate: {
-            path: "category",
-            select: "name",
-          },
+      await item.save();
+
+      return res.json({
+        success: true,
+        message:
+          "Bundle updated",
+        item:
+          await populateCartItem(
+            item
+          ),
+      });
+    } catch (error) {
+      console.error(
+        "UPDATE BUNDLE ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to update bundle",
+      });
+    }
+  }
+);
+
+/* =========================================================
+   REMOVE BUNDLE
+========================================================= */
+
+router.post(
+  "/removebundle",
+  optionalAuth,
+  async (req, res) => {
+    try {
+      const owner =
+        getCartOwner(req);
+
+      if (!owner) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Missing user or guestId",
+        });
+      }
+
+      const cartItemId =
+        req.body.cartItemId;
+
+      if (!cartItemId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "cartItemId is required",
+        });
+      }
+
+      const result =
+        await CartItem.findOneAndDelete({
+          ...owner,
+          _id: cartItemId,
+          type: "bundle",
         });
 
-    return res.json({
-      message: "Bundle added to cart",
-      item: populatedItem,
-    });
-  } catch (err) {
-    console.error(
-      "addbundle error:",
-      err
-    );
+      if (!result) {
+        return res.status(404).json({
+          success: false,
+          error:
+            "Bundle not found in cart",
+        });
+      }
 
-    return res.status(500).json({
-      error: "Failed to add bundle",
-    });
-  }
-});
+      return res.json({
+        success: true,
+        message:
+          "Bundle removed from cart",
+      });
+    } catch (error) {
+      console.error(
+        "REMOVE BUNDLE ERROR:",
+        error
+      );
 
-
-
-// 🛒 Update item (works for both product & bundle)
-router.post('/update', optionalAuth, async (req, res) => {
-  console.log("Update cart item request body000000:", req.body);
-  const key = cartKey(req);
-  const { productId, size,  cartItemId, quantity } = req.body;
-
-  if (!key || quantity == null)
-    return res.status(400).json({ error: 'Missing required fields' });
-
-  // 🧹 If quantity <= 0, just delete it
-  if (quantity <= 0) {
-  const filter = cartItemId
-  ? { ...key, _id: cartItemId }
-  : { ...key, product: productId, size };
-
-    await CartItem.findOneAndDelete(filter);
-    return res.json({ ok: true, message: "Item removed from cart" });
-  }
-
-  // 🧠 Build the filter
- const filter = cartItemId
-  ? { ...key, _id: cartItemId }
-  : { ...key, product: productId, size };
-
-  // 🔁 Update quantity
-  const item = await CartItem.findOneAndUpdate(
-    filter,
-    { $set: { quantity } },
-    { new: true }
-  );
-
-  if (!item)
-    return res.status(404).json({ error: "Cart item not found" });
-
-  res.json({ message: "Cart updated", item });
-});
-
-
-router.post('/remove',optionalAuth, async (req, res) => {
-  const key = cartKey(req);
-  console.log("Remove cart item request body:", req.body);
-  const { productId, size, cartItemId } = req.body;
-  if (!key || (!productId && !cartItemId))
-    return res.status(400).json({ error: 'Missing required fields' });
-
-  const filter = cartItemId
-    ? { ...key, _id: cartItemId }
-    : { ...key, product: productId, size };
-
-  const result = await CartItem.findOneAndDelete(filter);
-
-  if (!result)
-    return res.status(404).json({ error: 'Cart item not found' });
-
-  res.json({ message: 'Item removed from cart', item: result });
-});
-
-router.post('/clear',optionalAuth, async (req, res) => {
-  try {
-    const key = cartKey(req); // returns { user: userId } or { guestId }
-    if (!key) {
-      return res.status(400).json({ error: 'Missing user or guest identifier' });
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to remove bundle",
+      });
     }
-    const result = await CartItem.deleteMany(key);
-
-    res.json({
-      success: true,
-      message: 'Cart cleared successfully',
-      deletedCount: result.deletedCount,
-    });
-  } catch (err) {
-    console.error('Clear cart error:', err);
-    res.status(500).json({ error: 'Failed to clear cart' });
   }
-});
-// Merge guest cart after login
+);
 
+/* =========================================================
+   MERGE GUEST CART
+========================================================= */
 
-router.post('/merge', requireAuth, async (req, res) => {
-  const { guestId } = req.body
-  if (!guestId) return res.status(400).json({ error: 'Missing guestId' })
+router.post(
+  "/merge",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const guestId =
+        normalizePublicId(
+          req.body.guestId
+        );
 
-  const guestItems = await CartItem.find({ guestId })
-  for (const gi of guestItems) {
-    await CartItem.findOneAndUpdate(
-      { user: req.user.id, product: gi.product, size: gi.size },
-      { $inc: { quantity: gi.quantity } },
-      { upsert: true, new: true }
-    )
+      if (!guestId) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "guestId is required",
+        });
+      }
+
+      const userId =
+        new mongoose.Types.ObjectId(
+          String(req.user.id)
+        );
+
+      const guestItems =
+        await CartItem.find({
+          guestId,
+        });
+
+      for (
+        const guestItem of
+          guestItems
+      ) {
+        /*
+         * PRODUCT
+         */
+        if (
+          guestItem.type ===
+          "product"
+        ) {
+          const existing =
+            await CartItem.findOne({
+              user: userId,
+              type: "product",
+              publicId:
+                guestItem.publicId,
+              size:
+                guestItem.size,
+            });
+
+          if (existing) {
+            existing.quantity =
+              Number(
+                existing.quantity || 0
+              ) +
+              Number(
+                guestItem.quantity || 1
+              );
+
+            await existing.save();
+          } else {
+            await CartItem.create({
+              user: userId,
+
+              type: "product",
+
+              publicId:
+                guestItem.publicId,
+
+              sku:
+                guestItem.sku ||
+                null,
+
+              title:
+                guestItem.title ||
+                null,
+
+              mainImage:
+                guestItem.mainImage ||
+                null,
+
+              size:
+                guestItem.size ||
+                null,
+
+              quantity:
+                Number(
+                  guestItem.quantity || 1
+                ),
+            });
+          }
+
+          continue;
+        }
+
+        /*
+         * BUNDLE
+         */
+        if (
+          guestItem.type ===
+          "bundle"
+        ) {
+          const isCustom =
+            Boolean(
+              guestItem.isCustomBundle
+            );
+
+          const existingItems =
+            await CartItem.find({
+              user: userId,
+              type: "bundle",
+              isCustomBundle:
+                isCustom,
+            });
+
+          let existing = null;
+
+          /*
+           * PREBUILT
+           */
+          if (!isCustom) {
+            existing =
+              existingItems.find(
+                (item) =>
+                  item.bundle?.publicId ===
+                  guestItem.bundle?.publicId
+              );
+          }
+
+          /*
+           * CUSTOM
+           */
+          else {
+            const guestSignature =
+              (guestItem.bundleProducts ||
+                [])
+                .map(
+                  (product) =>
+                    `${product.publicId}:${product.size || ""}:${product.quantity}`
+                )
+                .sort()
+                .join("|");
+
+            existing =
+              existingItems.find(
+                (item) => {
+                  const signature =
+                    (item.bundleProducts ||
+                      [])
+                      .map(
+                        (product) =>
+                          `${product.publicId}:${product.size || ""}:${product.quantity}`
+                      )
+                      .sort()
+                      .join("|");
+
+                  return (
+                    signature ===
+                    guestSignature
+                  );
+                }
+              );
+          }
+
+          if (existing) {
+            existing.quantity =
+              Number(
+                existing.quantity || 0
+              ) +
+              Number(
+                guestItem.quantity || 1
+              );
+
+            await existing.save();
+          } else {
+            const data =
+              guestItem.toObject();
+
+            delete data._id;
+            delete data.guestId;
+            delete data.user;
+            delete data.createdAt;
+            delete data.updatedAt;
+
+            data.user =
+              userId;
+
+            await CartItem.create(
+              data
+            );
+          }
+        }
+      }
+
+      await CartItem.deleteMany({
+        guestId,
+      });
+
+      const items =
+        await getCartItems({
+          user: userId,
+        });
+
+      return res.json({
+        success: true,
+        items,
+      });
+    } catch (error) {
+      console.error(
+        "MERGE CART ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        error:
+          error.message ||
+          "Failed to merge guest cart",
+      });
+    }
   }
-  await CartItem.deleteMany({ guestId })
+);
 
-  const items = await CartItem.find({ user: req.user.id }).populate('product')
-  res.json({ items })
-})
-
-export default router
+export default router;

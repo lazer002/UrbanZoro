@@ -7,27 +7,144 @@ import { Inventory } from "../models/Inventory.js";
 
 const router = express.Router()
 
+
 router.get("/by-ids", async (req, res) => {
   try {
-    const ids = req.query.ids?.split(",") || [];
+    const publicIds = [
+      ...new Set(
+        String(req.query.ids || "")
+          .split(",")
+          .map((id) => id.trim())
+          .filter(Boolean)
+      ),
+    ];
 
-    const validIds = ids.filter((id) =>
-      /^[0-9a-fA-F]{24}$/.test(id)
-    );
-
-    if (!validIds.length) {
+    if (!publicIds.length) {
       return res.json({ items: [] });
     }
 
     const products = await Product.find({
-      _id: { $in: validIds },
+      publicId: { $in: publicIds },
       published: true,
+    })
+      .select(
+        "_id publicId title description details price oldPrice discount currency images sizes category tags active published onSale isNewProduct featured isOutOfStock sku slug createdAt updatedAt"
+      )
+      .lean();
+
+    if (!products.length) {
+      return res.json({ items: [] });
+    }
+
+    const productIds = products.map(
+      (product) => product._id
+    );
+
+    const inventories = await Inventory.find({
+      product: { $in: productIds },
+      active: true,
+    })
+      .select(
+        "product sku stock "
+      )
+      .lean();
+
+    const inventoryMap = new Map(
+      inventories.map((inventory) => [
+        String(inventory.product),
+        inventory,
+      ])
+    );
+
+    const items = products.map((product) => {
+      const inventory = inventoryMap.get(
+        String(product._id)
+      );
+
+      const stock = inventory?.stock || {};
+
+      const stockBySize = Object.fromEntries(
+        Object.entries(stock).map(
+          ([size, quantity]) => [
+            size,
+            Math.max(
+              0,
+              Number(quantity) || 0
+            ),
+          ]
+        )
+      );
+
+      const totalStock = Object.values(
+        stockBySize
+      ).reduce(
+        (total, quantity) =>
+          total + quantity,
+        0
+      );
+
+      const reserved = Math.max(
+        0,
+        Number(inventory?.reserved) || 0
+      );
+
+      const availableStock =
+        inventory?.trackInventory === false
+          ? Infinity
+          : Math.max(
+              0,
+              totalStock - reserved
+            );
+
+      return {
+        ...product,
+
+        inventory: {
+          sku:
+            inventory?.sku ||
+            product.sku ||
+            null,
+
+          stock: stockBySize,
+
+          totalStock,
+
+          reserved,
+
+          available:
+            availableStock === Infinity
+              ? null
+              : availableStock,
+
+          lowStockThreshold:
+            Number(
+              inventory?.lowStockThreshold
+            ) || 0,
+
+          trackInventory:
+            inventory?.trackInventory !== false,
+
+          allowBackorder:
+            inventory?.allowBackorder === true,
+
+          active:
+            inventory?.active === true,
+        },
+      };
     });
 
-    res.json({ items: products });
+    return res.json({
+      items,
+    });
   } catch (err) {
-    console.error("by-ids error:", err);
-    res.status(500).json({ message: "Server error" });
+    console.error(
+      "GET /products/by-ids error:",
+      err
+    );
+
+    return res.status(500).json({
+      message: "Server error",
+    });
   }
 });
 

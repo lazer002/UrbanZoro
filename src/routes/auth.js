@@ -80,7 +80,8 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select("+passwordHash");
+
     if (!user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
@@ -318,29 +319,41 @@ router.post("/change-password", async (req, res) => {
 });
 
 
-router.get("/me",requireAuth, async (req, res) => {
-  try {
-    const userId = req.user.id; 
 
-    const user = await User.findById(userId).select("-password");
+router.get(
+  "/me",
+  requireAuth,
+  async (req, res) => {
+    try {
+      const user =
+        await User.findById(req.user.id)
+          .select("-passwordHash")
+          .lean();
 
-    if (!user) {
-      return res.status(404).json({
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      return res.json({
+        success: true,
+        user,
+      });
+    } catch (error) {
+      console.error(
+        "GET /auth/me error:",
+        error
+      );
+
+      return res.status(500).json({
         success: false,
-        message: "User not found",
+        message: "Server error",
       });
     }
-
-    res.json({
-      success: true,
-      user,
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false });
   }
-});
+);
 
 router.post("/google", googleLogin);
 router.post("/google/mobile", googleLoginMobile);

@@ -1,70 +1,125 @@
-import { verifyAccessToken } from "../utils/jwt.js";
-import jwt from "jsonwebtoken";
+// middleware/auth.js
 
+import { verifyAccessToken } from "../utils/jwt.js";
+
+/* =========================================================
+   GET BEARER TOKEN
+========================================================= */
+
+function getBearerToken(req) {
+  const authHeader = req.headers.authorization || "";
+
+  if (!authHeader.startsWith("Bearer ")) {
+    return null;
+  }
+
+  const token = authHeader.slice(7).trim();
+
+  return token || null;
+}
+
+/* =========================================================
+   REQUIRE AUTH
+========================================================= */
 
 export function requireAuth(req, res, next) {
+  const token = getBearerToken(req);
 
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : null;
-    
   if (!token) {
-    return res.status(401).json({ error: "Unauthorized" });
+    return res.status(401).json({
+      error: "Unauthorized",
+      code: "NO_ACCESS_TOKEN",
+    });
   }
 
   try {
     const payload = verifyAccessToken(token);
 
-    const id = payload.id || payload.userId || payload._id;
+    const userId =
+      payload?.id ||
+      payload?.userId ||
+      payload?._id;
 
-    if (!id) {
-      return res.status(401).json({ error: "Invalid token payload" });
+    if (!userId) {
+      return res.status(401).json({
+        error: "Invalid token payload",
+        code: "INVALID_TOKEN_PAYLOAD",
+      });
     }
 
-    req.user = { id: String(id), ...payload };
+    req.user = {
+      id: String(userId),
+      role: payload.role,
+      email: payload.email,
+      name: payload.name,
+    };
 
-    return next();
-  } catch (e) {
-    return res.status(401).json({ error: "Invalid or expired token" });
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      error: "Invalid or expired token",
+      code: "ACCESS_TOKEN_EXPIRED",
+    });
   }
 }
 
+/* =========================================================
+   OPTIONAL AUTH
+========================================================= */
 
 export function optionalAuth(req, res, next) {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : null;
+  const token = getBearerToken(req);
+  const guestId =
+    req.headers["x-guest-id"] || null;
 
-  const guestId = req.headers["x-guest-id"] || null;
-
-  // user
   if (token) {
     try {
-      const payload = verifyAccessToken(token);
+      const payload =
+        verifyAccessToken(token);
 
-      const id = payload.id || payload.userId || payload._id;
+      const userId =
+        payload?.id ||
+        payload?.userId ||
+        payload?._id;
 
-      if (id) {
-        req.user = { id: String(id), ...payload };
+      if (userId) {
+        req.user = {
+          id: String(userId),
+          role: payload.role,
+          email: payload.email,
+          name: payload.name,
+        };
       }
-    } catch (e) {
-      console.log("Invalid token, continuing as guest");
+    } catch {
+      req.user = undefined;
     }
   }
 
-  // guest
   if (guestId) {
-    req.guestId = guestId;
+    req.guestId = String(guestId);
   }
 
-  return next();
+  next();
 }
 
+/* =========================================================
+   REQUIRE ADMIN
+========================================================= */
+
 export function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== "admin") {
-    return res.status(403).json({ error: "Forbidden" });
+  if (!req.user?.id) {
+    return res.status(401).json({
+      error: "Unauthorized",
+      code: "AUTH_REQUIRED",
+    });
   }
+
+  if (req.user.role !== "admin") {
+    return res.status(403).json({
+      error: "Forbidden",
+      code: "ADMIN_REQUIRED",
+    });
+  }
+
   next();
 }

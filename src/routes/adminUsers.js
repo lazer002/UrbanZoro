@@ -60,7 +60,10 @@ router.get("/getCategory", async (req, res) => {
 // Update category
 router.put("/category/:id", async (req, res) => {
   try {
+
+    console.log('✌️req.params --->', req.params);
     const { id } = req.params;
+
     const { name, slug, photo } = req.body; // accept photo URL
     const updated = await Category.findByIdAndUpdate(
       id,
