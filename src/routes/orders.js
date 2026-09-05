@@ -5,8 +5,7 @@ import { GuestUser } from "../models/GuestUser.js";
 import { Payment } from "../models/Payment.js";
 import axios from "axios"; // fixed import
 import { getNextOrderSeq } from "../models/Counter.js";
-import { sendEmail } from "../utils/sendEmail.js";
-import { getEmailTemplate } from "../utils/emailTemplates.js";
+import { sendOrderEmail  } from "../utils/sendEmail.js";
 import { requireAuth ,optionalAuth} from "../middleware/auth.js";
 import {Product} from "../models/Product.js";
 import { Bundle } from "../models/Bundle.js";
@@ -58,9 +57,9 @@ for (const item of items) {
   // =========================
 
   if (item.bundleId) {
-    const bundle = await Bundle.findById(
-      item.bundleId
-    );
+    const bundle = await Bundle.findOne({
+      publicId: item.bundleId
+    });
 
     if (!bundle) {
       return res.status(400).json({
@@ -79,9 +78,9 @@ for (const item of items) {
     const bundleProductsValidated = [];
 
     for (const bp of item.bundleProducts || []) {
-      const product = await Product.findById(
-        bp.productId
-      );
+      const product = await Product.findOne({
+        publicId: bp.productId,
+      });
 
       if (!product) {
         return res.status(400).json({
@@ -154,8 +153,11 @@ for (const item of items) {
       quantity: bundleQuantity,
       price: bundle.price,
       total: itemTotal,
-      mainImage:
-        item.mainImage || "default.jpg",
+    mainImage:
+  item.mainImage &&
+  item.mainImage !== "default.jpg"
+    ? item.mainImage
+    : bundleProductsValidated[0]?.mainImage || "default.jpg",
       bundleProducts:
         bundleProductsValidated,
     });
@@ -187,9 +189,9 @@ for (const item of items) {
     }
 
     for (const bp of item.bundleProducts) {
-      const product = await Product.findById(
-        bp.productId
-      );
+      const product = await Product.findOne({
+        publicId: bp.productId,
+      });
 
       if (!product) {
         return res.status(400).json({
@@ -314,9 +316,9 @@ for (const item of items) {
   // 🛍️ NORMAL PRODUCT
   // =========================
 
-  const product = await Product.findById(
-    item.productId
-  );
+const product = await Product.findOne({
+  publicId: item.productId,
+});
 
   if (!product) {
     return res.status(400).json({
@@ -513,39 +515,34 @@ if (!userId) {
       order.razorpayOrderId = razorpayOrder.data.id;
       await order.save();
 
-      return res.json({
-        success: true,
-        orderNumber,
-        orderId: order._id,
-        amount: finalTotal, // frontend will use this
-        currency: "INR",
-        razorpayOrderId: razorpayOrder.data.id,
-      });
+   return res.json({
+  success: true,
+  orderNumber,
+  publicOrderId: order.publicOrderId,
+  orderId: order._id,
+  amount: finalTotal,
+  currency: "INR",
+  razorpayOrderId: razorpayOrder.data.id,
+});
     }
 
     // =========================
     // 📩 COD Email
     // =========================
 
-const emailStatus =
-  paymentMethod === "cod"
-    ? "confirmed"
-    : "placed";
 
+await sendOrderEmail({
+  status: "confirmed",
+  order,
+});
 
-    try {
-      const { subject, text, html } = getEmailTemplate(emailStatus, { order });
-      await sendEmail({ to: order.email, subject, text, html });
-    } catch (err) {
-      console.error("Email error:", err.message);
-    }
-
-    res.json({
-      success: true,
-      orderNumber,
-      orderId: order._id,
-      message: "Order placed successfully (COD)",
-    });
+res.json({
+  success: true,
+  orderNumber,
+  publicOrderId: order.publicOrderId,
+  orderId: order._id,
+  message: "Order placed successfully (COD)",
+});
 
   } catch (err) {
     console.error("Error creating order:", err);
@@ -560,7 +557,10 @@ router.post("/webhook", async (req, res) => {
     const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
     const signature = req.headers["x-razorpay-signature"];
 
-    // ✅ raw buffer → string
+    // =========================
+    // 🔐 VERIFY WEBHOOK SIGNATURE
+    // =========================
+
     const rawBody = req.body.toString();
 
     const expectedSignature = crypto
@@ -578,24 +578,38 @@ router.post("/webhook", async (req, res) => {
     // =========================
     // 💰 PAYMENT SUCCESS
     // =========================
+
     if (event.event === "payment.captured") {
       const payment = event.payload.payment.entity;
+
+      // =========================
+      // 🔗 FIND PAYMENT
+      // =========================
 
       const paymentDoc = await Payment.findOne({
         razorpayOrderId: payment.order_id,
       });
 
-      if (!paymentDoc) return res.sendStatus(200);
-
-      // ✅ prevent duplicate
-      if (paymentDoc.status === "paid") {
+      if (!paymentDoc) {
+        console.log("⚠️ Payment document not found");
         return res.sendStatus(200);
       }
 
-      const order = await Order.findById(paymentDoc.orderId);
-      if (!order) return res.sendStatus(200);
+      // =========================
+      // 📦 FIND ORDER
+      // =========================
 
-      // ✅ verify amount + currency
+      const order = await Order.findById(paymentDoc.orderId);
+
+      if (!order) {
+        console.log("⚠️ Order not found");
+        return res.sendStatus(200);
+      }
+
+      // =========================
+      // 💰 VERIFY AMOUNT + CURRENCY
+      // =========================
+
       if (
         payment.amount !== order.total * 100 ||
         payment.currency !== "INR"
@@ -604,32 +618,85 @@ router.post("/webhook", async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // ✅ verify order_id mapping
+      // =========================
+      // 🔗 VERIFY RAZORPAY ORDER ID
+      // =========================
+
       if (payment.order_id !== paymentDoc.razorpayOrderId) {
         console.log("❌ Razorpay order mismatch");
         return res.sendStatus(200);
       }
 
-      // ✅ update payment
-      paymentDoc.razorpayPaymentId = payment.id;
-      paymentDoc.razorpaySignature = signature;
-      paymentDoc.status = "paid";
-      await paymentDoc.save();
+      // =========================
+      // 🔒 ATOMIC PAYMENT CLAIM
+      // =========================
+      //
+      // Only ONE webhook request can change
+      // payment status from pending → paid.
+      //
+      // If another webhook already changed it,
+      // findOneAndUpdate() returns null.
+      //
 
-      // ✅ update order
- order.paymentStatus = "paid";
-order.orderStatus = "confirmed";
+      const claimedPayment = await Payment.findOneAndUpdate(
+        {
+          _id: paymentDoc._id,
+          status: { $ne: "paid" },
+        },
+        {
+          $set: {
+            status: "paid",
+            razorpayPaymentId: payment.id,
+            razorpaySignature: signature,
+          },
+        },
+        {
+          new: true,
+        }
+      );
 
-await order.save();
+      // =========================
+      // 🚫 ALREADY PROCESSED
+      // =========================
 
-await updateOrderInventory(order, "decrease");
+      if (!claimedPayment) {
+        console.log("ℹ️ Payment already processed");
+        return res.sendStatus(200);
+      }
 
-      console.log("✅ Webhook: Payment captured updated");
+      // =========================
+      // ✅ UPDATE ORDER
+      // =========================
+
+      order.paymentStatus = "paid";
+      order.orderStatus = "confirmed";
+
+      await order.save();
+
+      // =========================
+      // 📦 DECREASE INVENTORY
+      // =========================
+
+      await updateOrderInventory(order, "decrease");
+
+      // =========================
+      // 📧 SEND CONFIRMATION EMAIL
+      // =========================
+
+      await sendOrderEmail({
+        status: "confirmed",
+        order,
+      });
+
+      console.log(
+        `✅ Webhook: Payment captured and order confirmed: ${order.orderNumber}`
+      );
     }
 
     // =========================
     // ❌ PAYMENT FAILED
     // =========================
+
     if (event.event === "payment.failed") {
       const payment = event.payload.payment.entity;
 
@@ -639,18 +706,22 @@ await updateOrderInventory(order, "decrease");
 
       if (paymentDoc && paymentDoc.status !== "paid") {
         paymentDoc.status = "failed";
+
         await paymentDoc.save();
       }
 
       console.log("❌ Webhook: Payment failed");
     }
 
-    // ✅ ALWAYS return 200
-    res.sendStatus(200);
+    // =========================
+    // ✅ ALWAYS RETURN 200
+    // =========================
+
+    return res.sendStatus(200);
 
   } catch (err) {
-    console.error("Webhook error:", err);
-    res.sendStatus(500);
+    console.error("❌ Webhook error:", err);
+    return res.sendStatus(500);
   }
 });
 
@@ -760,43 +831,16 @@ if (paymentData.status !== "captured") {
       });
     }
 
-    // =========================
-    // 💳 6. UPDATE PAYMENT
-    // =========================
+// =========================
+// ✅ 6. VERIFICATION ONLY
+// =========================
+// Do NOT mark payment/order as paid here.
+// Webhook is responsible for final processing.
 
-    paymentDoc.razorpayPaymentId = razorpay_payment_id;
-    paymentDoc.status = "paid";
-    paymentDoc.razorpaySignature = razorpay_signature; 
-    await paymentDoc.save();
-
-    // =========================
-    // ✅ 7. UPDATE ORDER
-    // =========================
-
-    order.paymentStatus = "paid";
-    order.orderStatus = "confirmed";
-
-    order.statusHistory.push({
-      status: "confirmed",
-      updatedAt: new Date(),
-    });
-
-    await order.save();
-
-    // =========================
-    // 📩 8. SEND EMAIL
-    // =========================
-    try {
-      const { subject, text, html } = getEmailTemplate("paid", { order });
-      await sendEmail({ to: order.email, subject, text, html });
-    } catch (err) {
-      console.error("Email error:", err.message);
-    }
-
-    res.json({
-      success: true,
-      message: "Payment verified successfully",
-    });
+return res.json({
+  success: true,
+  message: "Payment verified successfully. Awaiting webhook confirmation.",
+});
 
   } catch (err) {
     console.error("Payment verification error:", err);
@@ -806,113 +850,151 @@ if (paymentData.status !== "captured") {
 
 
 
-router.get("/track",optionalAuth, async (req, res) => {
+router.get("/track", optionalAuth, async (req, res) => {
   try {
     console.log("Track order query:", req.query);
+
     const { email, orderNumber } = req.query;
-    if (!email && !orderNumber) {
-      return res.status(400).json({ success: false, message: "email or orderNumber required" });
+    const userId = req.user?.id || null;
+    const guestId = req.headers["x-guest-id"];
+
+    // =========================
+    // 🔍 BASIC VALIDATION
+    // =========================
+
+    if (!orderNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "Order number is required",
+      });
     }
 
-    // prefer exact match by both if provided
-    const query = {};
-    if (email) query.email = email;
-    if (orderNumber) query.orderNumber = orderNumber;
+    let order;
 
-    // if only email provided, return the most recent order for that email
-    const order = await Order.findOne(query).sort({ createdAt: -1 }).lean();
+    // =========================
+    // 👤 LOGGED-IN USER
+    // =========================
+
+    if (userId) {
+      order = await Order.findOne({
+        orderNumber,
+        userId,
+      }).lean();
+    }
+
+    // =========================
+    // 👤 GUEST USER
+    // =========================
+
+    else {
+      if (!email || !guestId) {
+        return res.status(400).json({
+          success: false,
+          message: "Email, order number and guest ID are required",
+        });
+      }
+
+      order = await Order.findOne({
+        orderNumber,
+        email,
+        guestId,
+      }).lean();
+    }
+
+    // =========================
+    // ❌ NOT FOUND
+    // =========================
 
     if (!order) {
-      return res.status(404).json({ success: false, message: "Order not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
     }
 
-    res.json({ success: true, order });
+    // =========================
+    // ✅ RESPONSE
+    // =========================
+
+    return res.json({
+      success: true,
+      order,
+    });
+
   } catch (err) {
     console.error("Track order error:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+    });
   }
 });
 
-router.post("/track-email", async (req, res) => {
+router.post("/track-email",optionalAuth, async (req, res) => {
   try {
-    const { email, orderNumber, orderId } = req.body;
+    const { email, orderNumber } = req.body;
+
     if (!email || !orderNumber) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email and order number are required." });
+      return res.status(400).json({
+        success: false,
+        message: "Email and order number are required.",
+      });
     }
 
-    // ✅ Find order to confirm existence (optional, but nice to have)
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedOrderNumber = orderNumber.trim();
+
     const order = await Order.findOne({
-      _id: orderId,
-      email,
-      orderNumber,
+      email: normalizedEmail,
+      orderNumber: normalizedOrderNumber,
     }).lean();
 
     if (!order) {
       return res.status(404).json({
         success: false,
-        message: "No matching order found for this email and order number.",
+        message:
+          "No matching order found for this email and order number.",
       });
     }
 
-    // ✅ Build tracking link
-    const origin = process.env.FRONTEND_URL || "https://yourfrontend.example";
-    const trackLink = `${origin}/track-order?email=${encodeURIComponent(
-      email
-    )}&orderNumber=${encodeURIComponent(orderNumber)}`;
+    const origin = process.env.CLIENT_ORIGIN_WEB;
 
-    // ✅ Email content
-    const subject = `Track Your Order — ${orderNumber}`;
-    const html = `
-      <div style="font-family: Arial, sans-serif; max-width:600px; margin:auto; border:1px solid #eee; border-radius:10px; padding:24px;">
-        <h2 style="text-align:center; color:#000; margin-bottom:20px;">🖤 Your DripDesi Order</h2>
-        <p style="font-size:15px; color:#333;">Hi ${order.shippingAddress?.firstName || "there"},</p>
-        <p style="font-size:14px; color:#555;">
-          You can track your order <strong>${orderNumber}</strong> anytime using the button below.
-        </p>
+    if (!origin) {
+      throw new Error("CLIENT_ORIGIN_WEB is not configured");
+    }
 
-        <div style="text-align:center; margin:28px 0;">
-          <a href="${trackLink}"
-            style="display:inline-block; background:#000; color:#fff; text-decoration:none; padding:12px 24px; border-radius:6px; font-weight:600;">
-            Track My Order
-          </a>
-        </div>
+    const trackLink =
+      `${origin}/trackorder` +
+      `?email=${encodeURIComponent(order.email)}` +
+      `&orderNumber=${encodeURIComponent(order.orderNumber)}`;
 
-        <p style="font-size:13px; color:#777;">
-          If the button doesn’t work, you can copy and paste this link into your browser:<br/>
-          <a href="${trackLink}" style="color:#000;">${trackLink}</a>
-        </p>
-
-        <hr style="margin:30px 0; border:none; border-top:1px solid #eee;" />
-        <p style="font-size:12px; color:#999; text-align:center;">
-          Thank you for shopping with <strong>DripDesi</strong>.<br/>
-          We’ll notify you once your items are shipped.
-        </p>
-      </div>
-    `;
-
-    // ✅ Send the email
-    const result = await sendEmail({
-      to: email,
-      subject,
-      html,
+    const result = await sendOrderEmail({
+      status: "tracking",
+      order,
+      trackLink,
     });
 
     if (!result.success) {
       throw result.error;
     }
 
-    console.log(`📧 Tracking email sent to ${email} for ${orderNumber}`);
+    console.log(
+      `📧 Tracking email sent to ${order.email} for ${order.orderNumber}`
+    );
+
     return res.json({
       success: true,
       message: "Tracking email sent successfully.",
     });
+
   } catch (err) {
-    console.error("❌ Email send error:", err);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to send tracking email." });
+    console.error("❌ Tracking email error:", err);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send tracking email.",
+    });
   }
 });
 
@@ -967,48 +1049,133 @@ router.post("/merge-orders", requireAuth, async (req, res) => {
     res.status(500).json({ error: "Merge failed" });
   }
 });
-router.get("/:publicOrderId",optionalAuth, async (req, res) => {
-  const order = await Order.findById(req.params.publicOrderId);
-  res.json({ order });
+router.get("/:publicOrderId", optionalAuth, async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      publicOrderId: req.params.publicOrderId,
+    });
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      order,
+    });
+  } catch (error) {
+    console.error("Get order error:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch order",
+    });
+  }
 });
-router.put("/cancel",optionalAuth, async (req, res) => {
+router.put("/cancel", optionalAuth, async (req, res) => {
   try {
     const { orderId } = req.body;
     const guestId = req.headers["x-guest-id"];
     const userId = req.user?.id || null;
 
+    // =========================
+    // 🔍 FIND ORDER
+    // =========================
+
     const order = await Order.findById(orderId);
 
     if (!order) {
-      return res.status(404).json({ error: "Order not found" });
+      return res.status(404).json({
+        error: "Order not found",
+      });
     }
 
-    /* 🔒 SECURITY */
+    // =========================
+    // 🔒 SECURITY
+    // =========================
+
     if (userId) {
+      // Logged-in user
       if (order.userId?.toString() !== userId.toString()) {
-        return res.status(403).json({ error: "Unauthorized" });
+        return res.status(403).json({
+          error: "Unauthorized",
+        });
       }
     } else {
-      if (order.guestId !== guestId) {
-        return res.status(403).json({ error: "Unauthorized" });
+      // Guest user
+      if (!guestId || order.guestId !== guestId) {
+        return res.status(403).json({
+          error: "Unauthorized",
+        });
       }
     }
 
-    /* 🚫 VALIDATION */
+    // =========================
+    // 🚫 VALIDATE STATUS
+    // =========================
+
     if (!["pending", "confirmed"].includes(order.orderStatus)) {
       return res.status(400).json({
         error: "Order cannot be cancelled now",
       });
     }
 
-    // ✅ USE THIS INSTEAD OF save()
-    const updatedOrder = await Order.findByIdAndUpdate(
-      orderId,
-      { orderStatus: "cancelled" }, // middleware will handle history
-      { new: true }
+    // =========================
+    // 🔒 ATOMIC CANCEL
+    // =========================
+    //
+    // This is important.
+    //
+    // If two requests arrive at the same time:
+    //
+    // Request A → pending/confirmed → cancelled ✅
+    // Request B → cannot match anymore ❌
+    //
+    // Therefore inventory is restored only once.
+    //
+
+    const updatedOrder = await Order.findOneAndUpdate(
+      {
+        _id: orderId,
+        orderStatus: {
+          $in: ["pending", "confirmed"],
+        },
+      },
+      {
+        $set: {
+          orderStatus: "cancelled",
+        },
+      },
+      {
+        new: true,
+      }
     );
-    await updateOrderInventory(order, "increase");
-    res.json({
+
+    // =========================
+    // 🚫 ALREADY CANCELLED /
+    // STATUS CHANGED
+    // =========================
+
+    if (!updatedOrder) {
+      return res.status(400).json({
+        error: "Order was already cancelled or cannot be cancelled now",
+      });
+    }
+
+    // =========================
+    // 📦 RESTORE INVENTORY
+    // =========================
+
+    await updateOrderInventory(updatedOrder, "increase");
+
+    // =========================
+    // ✅ RESPONSE
+    // =========================
+
+    return res.json({
       success: true,
       message: "Order cancelled successfully",
       order: updatedOrder,
@@ -1016,7 +1183,10 @@ router.put("/cancel",optionalAuth, async (req, res) => {
 
   } catch (err) {
     console.error("Cancel error:", err);
-    res.status(500).json({ error: "Cancel failed" });
+
+    return res.status(500).json({
+      error: "Cancel failed",
+    });
   }
 });
 

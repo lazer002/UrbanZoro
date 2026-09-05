@@ -24,7 +24,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.0.2",
     "razorpay": "^2.9.6",
-    "resend": "^6.17.2",
+    "resend": "^6.26.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

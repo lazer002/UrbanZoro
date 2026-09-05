@@ -2,6 +2,7 @@
 
 import { Resend } from "resend";
 import dotenv from "dotenv";
+import { getEmailTemplate } from "./emailTemplates.js";
 
 dotenv.config();
 
@@ -14,11 +15,14 @@ if (!process.env.EMAIL_USER || !apiKey) {
 const resend = new Resend(apiKey);
 
 /**
- * sendEmail
- * @param {{ to: string, subject: string, text?: string, html?: string }} opts
- * @returns {Promise<{ success: boolean, info?: any, error?: any }>}
+ * Generic email sender
  */
-export async function sendEmail({ to, subject, text, html }) {
+export async function sendEmail({
+  to,
+  subject,
+  text,
+  html,
+}) {
   console.log(
     `sendEmail to=${to} subject=${subject} html=${Boolean(html)} text=${Boolean(text)}`
   );
@@ -43,6 +47,7 @@ export async function sendEmail({ to, subject, text, html }) {
 
     if (error) {
       console.error("Resend error:", error);
+
       return {
         success: false,
         error,
@@ -55,9 +60,33 @@ export async function sendEmail({ to, subject, text, html }) {
     };
   } catch (err) {
     console.error("sendEmail error:", err);
+
     return {
       success: false,
       error: err,
     };
   }
+}
+
+/**
+ * Order email
+ * Gets the template and sends it.
+ */
+export async function sendOrderEmail({
+  status,
+  order,
+  trackLink,
+}) {
+  const { subject, text, html } = getEmailTemplate({
+    status,
+    order,
+    trackLink,
+  });
+
+  return await sendEmail({
+    to: order.email,
+    subject,
+    text,
+    html,
+  });
 }
