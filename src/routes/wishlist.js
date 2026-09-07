@@ -23,7 +23,11 @@ function idsToStrings(arr) {
 
 async function getWishlistOwner(req) {
   const userId = req.user?.id;
+  console.log('✌️userId --->', userId);
+
   const guestId = req.headers["x-guest-id"];
+  console.log('✌️guestId --->', guestId);
+
 
   if (!userId && !guestId) {
     throw new Error("No user or guest");

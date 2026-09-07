@@ -331,37 +331,42 @@ async function populateCartItem(item) {
                 bundleProduct.publicId
               );
 
-            return {
-              publicId:
-                bundleProduct.publicId,
+return {
+  publicId: bundleProduct.publicId,
 
-              sku:
-                bundleProduct.sku ||
-                product?.sku ||
-                null,
+  sku:
+    bundleProduct.sku ||
+    product?.sku ||
+    null,
 
-              title:
-                bundleProduct.title ||
-                product?.title ||
-                null,
+  title:
+    bundleProduct.title ||
+    product?.title ||
+    null,
 
-              image:
-                bundleProduct.image ||
-                product?.images?.[0] ||
-                null,
+  image:
+    bundleProduct.image ||
+    product?.images?.[0] ||
+    null,
 
-              size:
-                bundleProduct.size ||
-                null,
+  price:
+    product?.price ?? 0,
 
-              quantity:
-                Number(
-                  bundleProduct.quantity || 1
-                ),
+  category:
+    product?.category ?? null,
 
-              inventory:
-                product?.inventory || null,
-            };
+  tags:
+    product?.tags || [],
+
+  size:
+    bundleProduct.size || null,
+
+  quantity:
+    Number(bundleProduct.quantity || 1),
+
+  inventory:
+    product?.inventory || null,
+};
           }
         )
       );
@@ -530,6 +535,8 @@ router.post(
     try {
       const owner =
         getCartOwner(req);
+      console.log('✌️owner --->', owner);
+
 
       if (!owner) {
         return res.status(400).json({
