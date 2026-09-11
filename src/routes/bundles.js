@@ -4,7 +4,7 @@ import express from "express";
 import { Bundle } from "../models/Bundle.js";
 import { Product } from "../models/Product.js";
 import { requireAuth, requireAdmin, optionalAuth } from "../middleware/auth.js";
-
+import { Inventory } from "../models/Inventory.js";
 import {
   deleteSupabaseImages,
 
@@ -123,9 +123,10 @@ router.get("/",optionalAuth, async (req, res) => {
    GET SINGLE BUNDLE
 ========================= */
 
-router.get("/:publicId",optionalAuth, async (req, res) => {
+router.get("/:publicId", optionalAuth, async (req, res) => {
   try {
-    console.log(req.params.publicId)
+    console.log(req.params.publicId);
+
     const bundle = await Bundle.findOne({
       publicId: req.params.publicId,
       published: true,
@@ -143,11 +144,48 @@ router.get("/:publicId",optionalAuth, async (req, res) => {
       });
     }
 
-    res.json(bundle);
+    const productIds = (bundle.products || []).map(
+      (product) => product._id
+    );
+
+    const inventories = await Inventory.find({
+      product: { $in: productIds },
+    })
+      .select("product sku stock")
+      .lean();
+
+    const inventoryMap = new Map(
+      inventories.map((inventory) => [
+        String(inventory.product),
+        inventory,
+      ])
+    );
+
+    const productsWithInventory = (
+      bundle.products || []
+    ).map((product) => {
+      const inventory = inventoryMap.get(
+        String(product._id)
+      );
+
+      return {
+        ...product,
+        inventory: inventory?.stock || {},
+      };
+    });
+
+    console.log('✌️bundle --->', bundle);
+    console.log('✌️productsWithInventory --->', productsWithInventory);
+    return res.json({
+      ...bundle,
+      products: productsWithInventory,
+    });
+
+
   } catch (error) {
     console.error("GET BUNDLE ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       message: "Server error",
     });
   }
