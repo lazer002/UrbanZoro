@@ -50,6 +50,7 @@ router.post("/create", optionalAuth, async (req, res) => {
 
 
     let calculatedSubtotal = 0;
+    let originalSubtotal = 0;
     const validatedItems = [];
 for (const item of items) {
   // =========================
@@ -70,10 +71,15 @@ for (const item of items) {
     const bundleQuantity =
       Number(item.quantity) || 1;
 
-    const itemTotal =
-      bundle.price * bundleQuantity;
+const itemTotal =
+  Number(bundle.price || 0) * bundleQuantity;
 
-    calculatedSubtotal += itemTotal;
+const bundleOldPrice =
+  Number(bundle.oldPrice || bundle.price || 0) *
+  bundleQuantity;
+
+calculatedSubtotal += itemTotal;
+originalSubtotal += bundleOldPrice;
 
     const bundleProductsValidated = [];
 
@@ -280,6 +286,9 @@ for (const item of items) {
       customBundlePrice *
       bundleQuantity;
 
+      originalSubtotal +=
+  originalBundlePrice * bundleQuantity;
+
     calculatedSubtotal += itemTotal;
 
     validatedItems.push({
@@ -376,11 +385,16 @@ const product = await Product.findOne({
     });
   }
 
-  const itemTotal =
-    Number(product.price || 0) *
-    quantity;
+const itemTotal =
+  Number(product.price || 0) *
+  quantity;
 
-  calculatedSubtotal += itemTotal;
+const productOldPrice =
+  Number(product.oldPrice || product.price || 0) *
+  quantity;
+
+calculatedSubtotal += itemTotal;
+originalSubtotal += productOldPrice;
 
   validatedItems.push({
     productId: product._id,
@@ -394,8 +408,19 @@ const product = await Product.findOne({
       "default.jpg",
   });
 }
-    const shippingFee = 0; // you can make dynamic later
-    const finalTotal = calculatedSubtotal + shippingFee;
+  const shippingFee = 0;
+
+const discountAmount = Math.max(
+  0,
+  Math.round(originalSubtotal - calculatedSubtotal)
+);
+
+const taxAmount = 0;
+
+const grandTotal =
+  calculatedSubtotal +
+  shippingFee +
+  taxAmount;
 
     // =========================
     // 👤 Guest Handling (unchanged)
@@ -449,9 +474,19 @@ if (!userId) {
       billingSame,
       shippingAddress,
       items: validatedItems, // ✅ secure items
-      subtotal: calculatedSubtotal,
+      subtotal: originalSubtotal,
+
+      discountAmount,
+
+      couponDiscount: 0,
+
       shippingFee,
-      total: finalTotal,
+
+      taxAmount,
+
+      grandTotal,
+
+      total: grandTotal,
       discountCode: discountCode || "",
       paymentMethod,
       source,
@@ -485,7 +520,7 @@ if (!userId) {
 
     if (paymentMethod === "razorpay") {
       const razorpayOptions = {
-        amount: finalTotal * 100, // 🔥 IMPORTANT (paise)
+        amount: grandTotal  * 100, // 🔥 IMPORTANT (paise)
         currency: "INR",
         receipt: order._id.toString(),
       };
